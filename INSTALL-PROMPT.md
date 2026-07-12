@@ -44,11 +44,19 @@ Pick the FIRST matching case:
   **project-level** (`<project>/.claude/skills/output-compress`, this repo only)?
   Then `cp -r <dir> <chosen>/`. The skill activates from `SKILL.md` frontmatter on
   the next session start.
-- **Codex / AGENTS.md-based agent**: append the skill section of `AGENTS.md`
-  (everything after its first `---`) into my project's `AGENTS.md`, and copy the
-  `scripts/` directory into the project (default expected path: `scripts/` at repo
-  root — if you place it elsewhere, rewrite the `fidelity-check.py` paths inside the
-  appended section to match).
+- **Codex Skill** (`~/.codex/skills` or `$CODEX_HOME/skills` exists, or I tell you I
+  use Codex skills): install this whole directory to
+  `${CODEX_HOME:-~/.codex}/skills/output-compress`. Prefer the official installer when
+  installing from GitHub:
+  `python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py --repo zeuikli/output-compress --path . --name output-compress`.
+  If installing from a local checkout, copy the directory there only if the destination
+  does not already exist. Validate with
+  `python3 ~/.codex/skills/.system/skill-creator/scripts/quick_validate.py ${CODEX_HOME:-~/.codex}/skills/output-compress`.
+- **Codex AGENTS.md fallback / always-loaded advisory**: append the skill section of
+  `AGENTS.md` (everything after its first `---`) into my project's `AGENTS.md`, and
+  copy the `scripts/` directory into the project (default expected path: `scripts/` at
+  repo root — if you place it elsewhere, rewrite the `fidelity-check.py` paths inside
+  the appended section to match).
 - **Anything else**: copy `scripts/` into the project, and tell me to keep `SKILL.md`
   sections 1–4 in the agent's permanent context (system prompt or pinned doc). The
   gate script is plain Python 3 with zero dependencies.
@@ -102,9 +110,9 @@ Ask me these two yes/no questions, then act:
 
 1. **Auto-activation every turn?** If yes and I'm on Claude Code, create the
    UserPromptSubmit hook from `USAGE.md` §7 (full-rules-once-then-short-reminder
-   pattern) and register it in my settings' hooks. If yes on Codex, the appended
-   AGENTS.md section already covers it. If no — I invoke it per conversation; nothing
-   to do.
+   pattern) and register it in my settings' hooks. If yes on Codex, use the AGENTS.md
+   fallback / always-loaded advisory section above. If no — I invoke it per
+   conversation; nothing to do.
 2. **Pace coupling / usage notification?** If yes, set up whatever refreshes the
    usage JSON (`OC_USAGE_FILE`, schema in `usage-pacer.py`'s docstring — I must tell
    you where my provider's usage numbers come from; if I don't have a source, skip

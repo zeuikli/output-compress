@@ -1,7 +1,8 @@
 ---
 name: output-compress
-version: 1.1.0
 description: 'Tiered output compression (caveman-derived): an explicitly opt-in, token-saving rewrite mode with a never-compress whitelist, model-tier compression caps, and a deterministic fidelity gate (no LLM self-judgment). Use when the user types output-compress, /compress, "compress lite|full|ultra", or asks to shorten/condense internal or scratch output. Do NOT use for: the final user-facing response language, safety/irreversible-action confirmations, contract fields (Goal/Non-goals/Done-when/Return), audit or review findings that must stay verbatim, or as a default/always-on behavior.'
+metadata:
+  version: 1.1.0
 ---
 
 # Output-Compress — tiered, whitelist-safe, mechanically verified compression
