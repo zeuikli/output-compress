@@ -1,0 +1,245 @@
+# output-compress — Usage Guide
+
+> How to actually use this skill day-to-day. Install steps live in `README.md`; this file covers invocation, level selection, the fidelity gate workflow, and customization.
+
+## 1. Activating
+
+Compression is **opt-in per conversation** — the skill never rewrites your output silently.
+
+| Agent | How to activate |
+|---|---|
+| Claude Code | Type `/compress full` (or `output-compress full`) — the skill loads and applies from the next reply onward |
+| Codex / AGENTS.md agents | Say `compress: full` in your instruction, or keep the AGENTS.md section permanently and gate it with "when I say compress" |
+
+Deactivate any time: `compress off` / "stop compressing".
+
+## 2. Choosing a level
+
+| Level | What gets removed | Use when |
+|---|---|---|
+| `lite` | Fillers, pleasantries, preambles only; full sentences kept | Weaker/smaller models will read the text, or the content carries dense logic |
+| `full` | + articles (a/an/the), fragment sentences allowed, result-first reordering | Default for mid-tier models; day-to-day technical Q&A |
+| `ultra` | + conjunctions dropped where whitelist allows | Frontier models only; throwaway intermediate output |
+
+Rule of thumb: **pick the level by who reads the text, not who writes it.** Notes for a future session of unknown model → `lite`. Scratch output only you will skim → `ultra`.
+
+Savings vary a lot by language: an informal local measurement of `full`-level
+compression on CJK prose landed around 15-18% bytes saved (n=4) — much lower than
+upstream's ~65% self-reported figure, because CJK has fewer articles and filler words
+to strip in the first place. English-heavy output tends to land closer to the upstream
+number. Measure your own before quoting a savings figure to anyone.
+
+## 3. The fidelity gate workflow
+
+Every time compressed text will be **persisted** (memory files, reports, handoff notes), verify it mechanically:
+
+```bash
+# 1. keep the original           2. compress it            3. verify
+cp draft.md /tmp/orig.txt        # (agent produces comp)   python3 scripts/fidelity-check.py \
+                                                             --original /tmp/orig.txt \
+                                                             --compressed /tmp/comp.txt
+```
+
+- `exit 0` → safe to persist.
+- `exit 1` → the printed list shows exactly which numbers / negations / paths / tags were lost. Retry one level lower (`ultra`→`full`→`lite`, max 2 retries), else keep the original.
+- If you're persisting and it still fails after retries: write the **original** text to the file, not the failing compressed version — but keep the `--log --level <L> --context <C>` flags on that last check so the failure gets recorded anyway (see §7 and `SKILL.md` §5 — a failed attempt is calibration signal, not just a rejected draft).
+- Never let the model judge "the meaning is still clear" — that self-assessment is the failure mode this gate exists to replace.
+
+Throwaway chat replies don't need the gate; persisted artifacts always do.
+
+### Pre-check: `--coverage` (is this text even worth compressing?)
+
+Before spending effort compressing an agent-dispatch prompt or archival/log text, ask
+the script how much of the file is already whitelist material — path/code/number/tag
+density that can't be removed anyway:
+
+```bash
+python3 scripts/fidelity-check.py --coverage --original /tmp/dispatch-prompt.txt
+```
+
+Sample output (one-line JSON, always exit 0):
+
+```json
+{"coverage_pct": 58.9, "recommendation": "skip"}
+```
+
+Decision table (thresholds are provisional — n=2, 2026-07-12 field run; see
+`SKILL.md` §2 for the underlying measurement):
+
+| `coverage_pct` | `recommendation` | meaning |
+|---|---|---|
+| ≥ 40 | `skip` | text is whitelist-dense; compress and you'll likely just trigger gate retries for single-digit-percent savings — don't bother |
+| 20–40 | `lite` | some whitelist density; cap the level at `lite` rather than reaching for `full`/`ultra` |
+| < 20 | `tier-cap` | low whitelist density; safe to use the full reader-tier cap from §2 |
+
+`--coverage` is a pre-check, not the fidelity gate — it never replaces
+`--original --compressed` verification once you do compress; it only tells you
+whether compressing is likely worth the round-trip in the first place.
+
+### Deletion, not rewriting
+
+The gate only checks whether whitelisted words/phrases *survive*, and compression is
+only supposed to *delete* redundant material (fillers, articles, connectives) — not
+rephrase sentences. Rewriting for brevity risks silently swapping out which literal
+words carry meaning, most commonly negations:
+
+- **OK (deletion):** `"the deploy failed, and we should not retry it right now"` →
+  `"deploy failed; don't retry now"` — same negation word survives, just trimmed.
+- **Risky (rewriting):** `"the deploy failed, rather than a config error"` →
+  `"deploy failed, not a config error"` — this swaps the negation-bearing phrase
+  entirely. The gate will likely still catch it (the specific negation words it's
+  tracking won't match up), but the underlying issue is that rewording was attempted
+  at all — a pure deletion pass never has this failure mode.
+
+If a sentence needs to be reworded (not just trimmed) to get shorter, leave it
+uncompressed.
+
+## 4. What is never compressed (whitelist)
+
+Numbers, negation words **and their whole clause** (not/never/unless/except…), file paths, URLs, code, structured tags, safety warnings, contract fields (Goal / Done-when / Return). If a paragraph is mostly whitelist material, skip compression — there is nothing safe to remove.
+
+## 5. Customizing for your language / tags
+
+`scripts/fidelity-check.py` ships with English negation words and generic tag patterns. Edit the two lists at the top of the file:
+
+```python
+NEGATIONS = ["not", "never", "unless", "except", ...]   # add yours: "不", "禁止", "nicht", "pas"…
+CUSTOM_TAG_PATTERNS = [r"\[TODO[^\]]*\]"]                # add your team's markers
+```
+
+Non-English users: add your language's negation words **before first use** — the gate can only protect what it knows to look for.
+
+## 6. Known limits
+
+- Fidelity gate checks element **presence**, not scope: "not X unless Y" mangled into "not X, Y" passes the counter but changed meaning — keep negation-heavy logic at `lite` or uncompressed.
+- Upstream token-saving figures (caveman's ~65% average) are self-reported on one model; measure your own before quoting savings.
+- Compression stacks badly with other brevity system prompts — if your agent already has a "be terse" rule, start at `lite` and compare.
+
+## 7. Auto-activation (optional)
+
+By default this skill is manual, per-turn opt-in (§1). If you want it to apply every
+turn without re-typing `/compress` each time, wire it into your agent's per-turn
+context instead of relying on a one-off invocation.
+
+**Claude Code — UserPromptSubmit hook:** inject a short advisory line before each
+prompt reaches the model. Show the full rules once (so the model has them at least
+once in context), then switch to a one-line reminder on subsequent turns so you're not
+re-spending tokens on the same paragraph every time — this is itself the "token diet"
+the skill is trying to achieve, applied to the hook's own output:
+
+```bash
+#!/usr/bin/env bash
+# .claude/hooks/compress-advisory.sh — register as a UserPromptSubmit hook
+STATE_FILE="${CLAUDE_PROJECT_DIR:-.}/.output-compress-advisory-shown"
+if [ ! -f "$STATE_FILE" ]; then
+  cat <<'EOF'
+output-compress AUTO: compress internal/scratch output (scratchpad, sub-agent prompts,
+report bodies) to the cap for your model tier (see the output-compress skill, SKILL.md
+S2). Never compress the final user-facing reply, safety/irreversible-action
+confirmations, or contract fields (Goal/Non-goals/Done-when/Return).
+EOF
+  touch "$STATE_FILE"
+else
+  echo "output-compress AUTO: tier cap still applies to internal output."
+fi
+```
+
+Register the script in your settings' hooks (`.claude/settings.json` at project level
+or `~/.claude/settings.json`) — the shell script alone does nothing until Claude Code
+knows to run it:
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command",
+          "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/compress-advisory.sh\"" } ] }
+    ]
+  }
+}
+```
+
+(Merge into an existing `hooks` block if you have one; use an absolute path instead of
+`$CLAUDE_PROJECT_DIR` for a user-level install.)
+
+Delete `$STATE_FILE` (or change its path) to reset back to the full-text reminder,
+e.g. after a model/tier change that invalidates the cached cap. **Also reset it after
+context compaction**: compaction can summarize away the full rules you showed once,
+leaving only the short reminder pointing at rules the model no longer has. On Claude
+Code, register a PostCompact hook with `rm -f "$STATE_FILE"` so the next turn re-shows
+the full text once; on agents without compaction events, delete the file whenever you
+manually condense the conversation.
+
+### Pace coupling (optional, needs `scripts/usage-pacer.py`)
+
+If you also want the "Pace-aware level adjustment" from `SKILL.md`, extend the same
+hook with the bundled portable pacer. You supply the usage data (a tiny JSON your
+cron/CLI refreshes — schema in the pacer's docstring); the pacer supplies deterministic
+verdicts and once-per-window notification arming. Three injection-diet rules keep the
+hook itself cheap (the same discipline the skill preaches, applied to the hook):
+
+1. **Recompute at most every 10 minutes** (verdict file mtime check) — not every prompt.
+2. **Inject the pace line only when the verdict changes** — ON_PACE is silent by design,
+   and repeating an unchanged AHEAD line every turn is pure injection tax.
+3. **Inject the notify line at most once** — the pacer already arms it once per window;
+   the hook-side content-compare guards against the verdict file's TTL window re-serving it.
+
+```bash
+# append inside compress-advisory.sh, after the advisory block above
+PACER="$(dirname "$0")/../skills/output-compress/scripts/usage-pacer.py"  # adjust path
+VERDICT="${OC_PACER_VERDICT:-/tmp/oc-pacer-verdict.json}"
+if [ -f "$PACER" ]; then
+  AGE=$(( $(date +%s) - $(stat -c%Y "$VERDICT" 2>/dev/null || echo 0) ))
+  [ "$AGE" -gt 600 ] && python3 "$PACER" >/dev/null 2>&1
+  LINE=$(python3 - "$VERDICT" "$STATE_FILE" <<'PY'
+import json, pathlib, sys
+v, state = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2] + ".pace")
+try: d = json.loads(v.read_text())
+except Exception: sys.exit()
+out = []
+prev = state.read_text() if state.exists() else ""
+if d.get("message") and d.get("verdict") != prev.split("|")[0]:
+    out.append(d["message"])
+notify = d.get("notify_user", "")
+if notify and notify not in prev:
+    out.append(notify)
+state.write_text(d.get("verdict", "") + "|" + notify)
+print("\n".join(out))
+PY
+)
+  [ -n "$LINE" ] && printf '%s\n' "$LINE"
+fi
+```
+
+The verdict JSON also carries `compress`/`compress_msg` — an absolute-threshold escalation
+(`used_pct >= 80%` → `"warn"`, `>= 95%` → `"urge"`) that is orthogonal to the AHEAD/BEHIND
+burn-rate verdict above and fires even when `ON_PACE`; extend the same dedup pattern
+(compare against a stored previous state, only inject on change) if you want to couple it.
+
+It also carries a `fanout` field — `"prefer-lower-tier"` on `AHEAD`, `"burst"` on
+`BEHIND`, `"normal"` otherwise (including `ON_PACE`) — so a delegation hook/skill can
+decide model-tier allocation for new sub-agent fan-out mechanically, without parsing
+the human-readable `message` string. Example verdict JSON:
+
+```json
+{"verdict": "AHEAD", "fanout": "prefer-lower-tier", "used_pct": 60.0, "ideal_pct": 20.0,
+ "delta_pp": 40.0, "window_left_h": 4.0, "message": "PACE AHEAD (+40pp): ...",
+ "notify_user": "", "compress": "", "compress_msg": ""}
+```
+
+| `verdict` | `fanout` | meaning |
+|---|---|---|
+| `AHEAD` | `prefer-lower-tier` | if you do fan out new sub-agents, prefer lower-tier workers |
+| `ON_PACE` | `normal` | no fan-out guidance change |
+| `BEHIND` | `burst` | quota headroom to spare, parallelism can go up — still subject to any external delegation/budget gate the host workspace runs (e.g. a fan-out concurrency cap or spend limiter) |
+
+What stays environment-specific (deliberately not shipped): *how* the notify line
+reaches the user (push tool, `osascript`, `notify-send`, a chat webhook) and any
+auto-handoff/self-wake machinery — those depend on your agent platform. The pacer's
+contract ends at "emit each signal exactly once, deterministically."
+
+**Codex / AGENTS.md agents:** no hook mechanism is needed — keep the `AGENTS.md`
+section for this skill permanently in your project's `AGENTS.md`. It's already loaded
+into context every session, so it behaves as always-on advisory without extra wiring;
+gate actual invocation with a phrase like "when I say compress" if you still want it
+opt-in rather than continuously applied.
