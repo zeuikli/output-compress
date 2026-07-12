@@ -165,10 +165,26 @@ knows to run it:
 Delete `$STATE_FILE` (or change its path) to reset back to the full-text reminder,
 e.g. after a model/tier change that invalidates the cached cap. **Also reset it after
 context compaction**: compaction can summarize away the full rules you showed once,
-leaving only the short reminder pointing at rules the model no longer has. On Claude
-Code, register a PostCompact hook with `rm -f "$STATE_FILE"` so the next turn re-shows
-the full text once; on agents without compaction events, delete the file whenever you
-manually condense the conversation.
+leaving only the short reminder pointing at rules the model no longer has. Claude Code
+has **no `PostCompact` hook event** — use a **`SessionStart` hook** instead. It fires on
+startup, resume, `/clear`, and after a compaction (`source: "compact"`), so an
+`rm -f "$STATE_FILE"` there re-shows the full text once on the next turn after
+compaction — and after every fresh session/clear, which is what you want anyway:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command",
+          "command": "rm -f \"$CLAUDE_PROJECT_DIR/.output-compress-advisory-shown\"" } ] }
+    ]
+  }
+}
+```
+
+Add `"matcher": "compact"` to that `SessionStart` entry if you want to reset *only* after
+compaction and not on every startup/clear. On agents without compaction/session events,
+delete the file whenever you manually condense the conversation.
 
 ### Pace coupling (optional, needs `scripts/usage-pacer.py`)
 
