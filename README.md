@@ -50,7 +50,10 @@ is optional — only needed for the pace-coupling described in `SKILL.md` / `USA
 §7. Claude and Codex users can also copy the optional provider feeders
 (`scripts/claude-usage-fetch.py` or `scripts/codex-usage-fetch.py`), which feed the
 pacer real usage numbers from the provider's usage endpoint instead of a
-bring-your-own JSON feed.
+bring-your-own JSON feed. Codex users who want automatic handoff wiring can also wire
+`scripts/codex-handoff.py --refresh` as a `UserPromptSubmit` hook; it injects the
+checkpoint + thread scheduled task / heartbeat directive when the pacer emits
+`HANDOFF_PREP` or `HANDOFF_HALT`.
 
 ## Quickstart: fidelity gate demo
 

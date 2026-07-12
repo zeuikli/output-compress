@@ -24,18 +24,20 @@ Find the `output-compress/` directory (ask me for the path if you can't). Confir
 contains: `SKILL.md`, `AGENTS.md`, `USAGE.md`, `README.md`,
 `scripts/fidelity-check.py`, `scripts/usage-pacer.py`,
 `scripts/claude-usage-fetch.py` (optional Claude usage feeder),
-`scripts/codex-usage-fetch.py` (optional Codex usage feeder). List what you found. If
-files are missing, stop and tell me which.
+`scripts/codex-usage-fetch.py` (optional Codex usage feeder), and
+`scripts/codex-handoff.py` (optional Codex auto-handoff hook helper). List what you
+found. If files are missing, stop and tell me which.
 
 ## Step 0.5 — Read what you are about to install (do not skip)
 
 Before copying anything into a privileged location (`~/.claude/`, hooks, settings),
-**read both `scripts/fidelity-check.py` and `scripts/usage-pacer.py` in full** and
-confirm to me in one sentence each what they do and that they contain no network
-calls, no writes outside their documented log/flag paths, and no code unrelated to
-compression/pacing. These scripts may later run on every prompt via a hook — treat
-them like any third-party code you'd register into an agent's hot path. If anything
-looks unrelated to what this document describes, STOP and show me.
+**read `scripts/fidelity-check.py`, `scripts/usage-pacer.py`, and any hook helper you
+plan to wire (`scripts/codex-handoff.py` on Codex) in full** and confirm to me in one
+sentence each what they do and that they contain no secret printing, no writes outside
+their documented log/flag/state paths, and no code unrelated to compression/pacing /
+handoff. These scripts may later run on every prompt via a hook — treat them like any
+third-party code you'd register into an agent's hot path. If anything looks unrelated
+to what this document describes, STOP and show me.
 
 ## Step 1 — Detect my environment and install
 
@@ -112,6 +114,10 @@ Run from wherever you installed it (`python3` ≥ 3.10):
    ```bash
    python3 <install-path>/scripts/codex-usage-fetch.py --self-test   # expect SELF-TEST PASS
    ```
+   If `scripts/codex-handoff.py` is present, self-test it too (offline, no network):
+   ```bash
+   python3 <install-path>/scripts/codex-handoff.py --self-test   # expect SELF-TEST PASS
+   ```
 
 If any check fails, diagnose before proceeding — do not declare the install done.
 Clean up the `/tmp/oc-*` files afterwards.
@@ -151,6 +157,12 @@ Ask me these two yes/no questions, then act:
    (default = leave it). Tunables: `OC_HANDOFF_PCT` (90), `OC_HANDOFF_LEFT_H` (0.5),
    `OC_HANDOFF_MAX` (2, the consecutive-window circuit breaker),
    `OC_HANDOFF_RESUME_DELAY_MIN` (3).
+
+   For Codex full auto-handoff, wire `scripts/codex-handoff.py --refresh` as the
+   `UserPromptSubmit` hook. It best-effort runs the Codex usage feeder and pacer,
+   deduplicates the handoff window, and injects a Codex-specific directive that tells
+   the agent to persist a checkpoint and create a thread scheduled task / heartbeat at
+   `resume_at` using the Codex automation tool when available.
 
 ## Step 4.5 — Optional: advisory contract-field lint hook (recipe only — ask before installing)
 
