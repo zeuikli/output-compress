@@ -165,11 +165,11 @@ knows to run it:
 Delete `$STATE_FILE` (or change its path) to reset back to the full-text reminder,
 e.g. after a model/tier change that invalidates the cached cap. **Also reset it after
 context compaction**: compaction can summarize away the full rules you showed once,
-leaving only the short reminder pointing at rules the model no longer has. Claude Code
-has **no `PostCompact` hook event** — use a **`SessionStart` hook** instead. It fires on
-startup, resume, `/clear`, and after a compaction (`source: "compact"`), so an
-`rm -f "$STATE_FILE"` there re-shows the full text once on the next turn after
-compaction — and after every fresh session/clear, which is what you want anyway:
+leaving only the short reminder pointing at rules the model no longer has. On Claude
+Code, use a **`SessionStart` hook** — it fires on startup, resume, `/clear`, and after a
+compaction (`source: "compact"`), so an `rm -f "$STATE_FILE"` there re-shows the full
+text once on the next turn after compaction — and after every fresh session/clear, which
+is what you want anyway:
 
 ```json
 {
@@ -182,9 +182,12 @@ compaction — and after every fresh session/clear, which is what you want anywa
 }
 ```
 
-Add `"matcher": "compact"` to that `SessionStart` entry if you want to reset *only* after
-compaction and not on every startup/clear. On agents without compaction/session events,
-delete the file whenever you manually condense the conversation.
+Add `"matcher": "compact"` to that `SessionStart` entry to reset *only* after compaction
+and not on every startup/clear. (Claude Code also has a dedicated **`PostCompact`** hook
+that fires only after a compaction; use it instead if you want to reset on compaction
+alone — `SessionStart` is recommended here because re-showing the full rules on a fresh
+session/clear is desirable too.) On agents without compaction/session events, delete the
+file whenever you manually condense the conversation.
 
 ### Pace coupling (optional, needs `scripts/usage-pacer.py`)
 
@@ -304,7 +307,7 @@ the human-readable `message` string. Example verdict JSON:
 ```json
 {"verdict": "AHEAD", "fanout": "prefer-lower-tier", "used_pct": 60.0, "ideal_pct": 20.0,
  "delta_pp": 40.0, "window_left_h": 4.0, "message": "PACE AHEAD (+40pp): ...",
- "notify_user": "", "compress": "", "compress_msg": ""}
+ "notify_user": "", "compress": "", "compress_msg": "", "handoff": "", "resume_at": ""}
 ```
 
 | `verdict` | `fanout` | meaning |
@@ -313,10 +316,42 @@ the human-readable `message` string. Example verdict JSON:
 | `ON_PACE` | `normal` | no fan-out guidance change |
 | `BEHIND` | `burst` | quota headroom to spare, parallelism can go up — still subject to any external delegation/budget gate the host workspace runs (e.g. a fan-out concurrency cap or spend limiter) |
 
+#### Handoff-aware pacing (`handoff` / `resume_at`)
+
+When the window is nearly exhausted — `used_pct >= 90%` **and** `< 0.5h` left — the
+pacer overrides the burn-rate verdict with a **handoff** state, because at that point
+the priority is *not losing work* rather than pacing it:
+
+| `verdict` | `handoff` | `resume_at` | what the injected `message` tells the model to do |
+|---|---|---|---|
+| `HANDOFF_PREP` | `"prep"` | ISO UTC (reset + 3 min) | persist a handoff to memory (task / Done-when / tried / next-action) + commit & push, then schedule a self-wake at `resume_at` — or notify the user to resume then |
+| `HANDOFF_HALT` | `"halt"` | `""` | wrap up + persist the handoff only; do **not** schedule another self-wake (circuit breaker tripped) |
+
+The **memory write and the self-wake scheduling are delegated to your environment** —
+the pacer only decides *when* to hand off and *when* the wake should fire. On Claude
+Code that means the model runs its normal cross-session persistence (Auto Memory, a
+handoff skill, `git commit && push`) and schedules the wake with `/schedule` or a
+`send_later`-style tool; where none of those exist, the `message` degrades to "notify
+the user to resume after `resume_at`". The existing hook already injects `message` on
+any verdict change, so `HANDOFF_PREP` / `HANDOFF_HALT` flow through with **no extra
+wiring** — read the machine-readable `handoff` / `resume_at` fields only if you want to
+wire the self-wake mechanically rather than letting the model act on the text.
+
+**Circuit breaker.** The pacer counts consecutive windows that hit the handoff
+threshold (keyed by `resets_at`). After `OC_HANDOFF_MAX` (default 2) consecutive windows
+it emits `HANDOFF_HALT` instead of `HANDOFF_PREP` and stops arming the self-wake:
+repeatedly burning through whole windows unattended is a runaway / goal-drift signal, so
+it hands control back to you. Thresholds are tunable via `OC_HANDOFF_PCT` (90),
+`OC_HANDOFF_LEFT_H` (0.5), `OC_HANDOFF_MAX` (2), `OC_HANDOFF_RESUME_DELAY_MIN` (3); set
+`OC_HANDOFF_PCT=0` to disable handoff states entirely.
+
 What stays environment-specific (deliberately not shipped): *how* the notify line
-reaches the user (push tool, `osascript`, `notify-send`, a chat webhook) and any
-auto-handoff/self-wake machinery — those depend on your agent platform. The pacer's
-contract ends at "emit each signal exactly once, deterministically."
+reaches the user (push tool, `osascript`, `notify-send`, a chat webhook), and the
+**execution** of a handoff — the actual memory write and self-wake scheduling behind
+`HANDOFF_PREP` / `HANDOFF_HALT`. The pacer decides *when* to notify, compress, and hand
+off; delivering the notification and performing the handoff/self-wake are your
+platform's job. The pacer's contract ends at "emit each signal exactly once,
+deterministically."
 
 **Codex / AGENTS.md agents:** no hook mechanism is needed — keep the `AGENTS.md`
 section for this skill permanently in your project's `AGENTS.md`. It's already loaded
