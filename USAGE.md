@@ -366,3 +366,68 @@ returns to the same task after the quota window resets. The pacer still does not
 that automation by itself: the hook or host workflow must read `handoff` / `resume_at`,
 persist the handoff summary, and ask Codex to schedule the follow-up. If that host
 automation is not available, degrade to notifying the user to resume at `resume_at`.
+
+##### Codex full auto-handoff hook
+
+For Codex, the bundled hook helper does the mechanical part:
+
+```bash
+python3 scripts/codex-handoff.py --refresh
+```
+
+`--refresh` best-effort runs `scripts/codex-usage-fetch.py` and `scripts/usage-pacer.py`
+first, then reads `OC_PACER_VERDICT`. When the pacer emits `HANDOFF_PREP`, the helper
+deduplicates the handoff window and outputs Codex hook JSON that adds developer context
+with:
+
+- the exact `resume_at`
+- a one-shot `RRULE` (`DTSTART:<resume_at>` plus `RRULE:FREQ=MINUTELY;COUNT=1`)
+- a durable scheduled-task prompt for resuming the same task
+- required steps to persist the handoff checkpoint and preserve work
+
+When the pacer emits `HANDOFF_HALT`, the helper injects a checkpoint-only directive and
+explicitly forbids creating another self-wake.
+
+Register it as a Codex `UserPromptSubmit` command hook. Project-level
+`.codex/hooks.json` example:
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/codex-handoff.py\" --refresh"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+If installed as a user-level Codex skill, use the skill path instead:
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CODEX_HOME:-$HOME/.codex}/skills/output-compress/scripts/codex-handoff.py\" --refresh"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+The helper intentionally does not call git or write Codex automation state files
+itself. Codex hooks can inject context, while scheduled task / heartbeat creation is a
+Codex host/tool action. The injected directive tells Codex to use the automation tool
+when available; if it is not available, the fallback is an explicit user notification.

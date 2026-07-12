@@ -121,3 +121,8 @@ self-wake loop. On Codex, the pacer can feed a hook or host workflow, but the me
 write and any scheduled task / heartbeat self-wake are still the platform's job (the
 pacer only decides *when*). See `USAGE.md` §7 "Handoff-aware pacing" and the
 `OC_HANDOFF_*` tunables.
+
+For Codex auto-handoff wiring, use `scripts/codex-handoff.py --refresh` from a
+`UserPromptSubmit` command hook. It refreshes Codex usage, runs the pacer, deduplicates
+handoff windows, and injects developer context that tells Codex to persist the handoff
+checkpoint and create a thread scheduled task / heartbeat at `resume_at`.
