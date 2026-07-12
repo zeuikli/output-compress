@@ -23,6 +23,10 @@ your provider exposes usage — a cron curl, a CLI wrapper, an SDK script:
 
     {"used_pct": 63.0, "resets_at": "2026-07-11T21:30:00Z"}
 
+On Claude subscriptions the bundled companion `claude-usage-fetch.py` can populate
+this file for you from the official usage endpoint (run it best-effort right before
+this pacer); bring-your-own JSON stays the general, provider-agnostic mechanism.
+
 Absolute-threshold compression escalation (orthogonal to the pace verdict above -
 fires even when ON_PACE, because it tracks raw quota level, not burn rate):
 
@@ -126,6 +130,41 @@ def compute(used_pct: float, resets_at_iso: str, now: datetime.datetime | None =
             "compress": compress, "compress_msg": compress_msg}
 
 
+def _validate(used_pct: float, resets_at_iso: str,
+              now: datetime.datetime | None = None) -> tuple[float, str]:
+    """Sanity-gate the loaded usage record before it drives a verdict.
+
+    A dead container or a failed refresh cron can leave a stale usage file whose
+    numbers now mis-verdict AHEAD/BEHIND; an unusable record is better treated as
+    NO_DATA than trusted. Also normalizes resets_at to an aware UTC 'Z' string so a
+    naive timestamp (which would otherwise crash compute() on an aware/naive
+    comparison, breaking the "exit 0 always" promise) is handled cleanly.
+
+    Returns (used_pct, normalized_resets_at_iso); raises ValueError on rejection
+    (message carries the reason, surfaced verbatim in main()'s --json output).
+    """
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    if not (0.0 <= used_pct <= 100.0):
+        raise ValueError(f"used_pct out of [0,100]: {used_pct} (stale/implausible used_pct)")
+    txt = resets_at_iso.strip().replace("Z", "+00:00")
+    try:
+        dt = datetime.datetime.fromisoformat(txt)
+    except ValueError:
+        try:  # minute-truncated form on Python < 3.11
+            dt = datetime.datetime.fromisoformat(txt + ":00")
+        except ValueError:
+            raise ValueError(f"unparseable resets_at: {resets_at_iso}")
+    if dt.tzinfo is None:  # naive -> assume UTC
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
+    dt = dt.astimezone(datetime.timezone.utc)
+    if dt < now - datetime.timedelta(hours=1) or \
+            dt > now + datetime.timedelta(hours=WINDOW_H + 1):
+        raise ValueError(f"resets_at outside plausible window "
+                         f"(now-1h .. now+{WINDOW_H + 1:.0f}h): {resets_at_iso} "
+                         f"(stale/implausible resets_at)")
+    return used_pct, dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def self_test() -> int:
     now = datetime.datetime(2026, 1, 1, 12, 0, tzinfo=datetime.timezone.utc)
     NOTIFY_FLAG.unlink(missing_ok=True)
@@ -156,7 +195,23 @@ def self_test() -> int:
     assert e4["compress"] == "warn", e4
     e5 = compute(95.0, "2026-01-01T14:30:00Z", now)
     assert e5["compress"] == "urge", e5
-    print("SELF-TEST PASS (AHEAD/ON_PACE/BEHIND/NOTIFY once-per-window/COMPRESS-threshold/FANOUT)")
+    # sanity gate: out-of-range used_pct rejected
+    try:
+        _validate(150, "2026-01-01T14:30:00Z", now)
+        assert False, "out-of-range used_pct should be rejected"
+    except ValueError as ex:
+        assert "stale/implausible used_pct" in str(ex), ex
+    # sanity gate: implausible future resets_at rejected (now+10h > now+WINDOW_H+1h)
+    try:
+        _validate(50, "2026-01-01T22:00:00Z", now)
+        assert False, "implausible future resets_at should be rejected"
+    except ValueError as ex:
+        assert "stale/implausible resets_at" in str(ex), ex
+    # sanity gate: naive resets_at accepted and treated as UTC; plausible value passes
+    v_used, v_reset = _validate(50, "2026-01-01T14:30:00", now)
+    assert v_used == 50.0 and v_reset == "2026-01-01T14:30:00Z", (v_used, v_reset)
+    print("SELF-TEST PASS (AHEAD/ON_PACE/BEHIND/NOTIFY once-per-window/"
+          "COMPRESS-threshold/FANOUT/sanity-gate)")
     return 0
 
 
@@ -171,6 +226,7 @@ def main() -> int:
         cache = json.loads(USAGE_FILE.read_text())
         used = float(cache["used_pct"])
         reset = str(cache["resets_at"])
+        used, reset = _validate(used, reset)
     except Exception as e:
         if a.json:
             print(json.dumps({"verdict": "NO_DATA", "fanout": "normal", "reason": str(e)}))

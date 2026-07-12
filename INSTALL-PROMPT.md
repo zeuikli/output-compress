@@ -22,8 +22,9 @@ do not skip a verification because something "looks right".
 
 Find the `output-compress/` directory (ask me for the path if you can't). Confirm it
 contains: `SKILL.md`, `AGENTS.md`, `USAGE.md`, `README.md`,
-`scripts/fidelity-check.py`, `scripts/usage-pacer.py`. List what you found. If files
-are missing, stop and tell me which.
+`scripts/fidelity-check.py`, `scripts/usage-pacer.py`,
+`scripts/claude-usage-fetch.py` (optional Claude-only usage feeder). List what you
+found. If files are missing, stop and tell me which.
 
 ## Step 0.5 — Read what you are about to install (do not skip)
 
@@ -100,6 +101,10 @@ Run from wherever you installed it (`python3` ≥ 3.10):
    ```bash
    python3 <install-path>/scripts/usage-pacer.py --self-test   # expect SELF-TEST PASS
    ```
+   If `scripts/claude-usage-fetch.py` is present, self-test it too (offline, no network):
+   ```bash
+   python3 <install-path>/scripts/claude-usage-fetch.py --self-test   # expect SELF-TEST PASS
+   ```
 
 If any check fails, diagnose before proceeding — do not declare the install done.
 Clean up the `/tmp/oc-*` files afterwards.
@@ -116,8 +121,12 @@ Ask me these two yes/no questions, then act:
 2. **Pace coupling / usage notification?** If yes, set up whatever refreshes the
    usage JSON (`OC_USAGE_FILE`, schema in `usage-pacer.py`'s docstring — I must tell
    you where my provider's usage numbers come from; if I don't have a source, skip
-   this and note it as not-wired), then add the pace block from `USAGE.md` §7. If no,
-   skip — the skill works fully without it.
+   this and note it as not-wired), then add the pace block from `USAGE.md` §7. **If
+   I'm a Claude subscriber**, wire `scripts/claude-usage-fetch.py` instead of building
+   my own feed — it refreshes the JSON from the official endpoint and finds my token
+   automatically (chain documented in its docstring and `USAGE.md` §7); add its
+   best-effort call two lines before the pacer. If no, skip — the skill works fully
+   without it.
 
 ## Step 4.5 — Optional: advisory contract-field lint hook (recipe only — ask before installing)
 
