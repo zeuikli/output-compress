@@ -2,7 +2,7 @@
 name: output-compress
 description: 'Tiered output compression (caveman-derived): an explicitly opt-in, token-saving rewrite mode with a never-compress whitelist, model-tier compression caps, and a deterministic fidelity gate (no LLM self-judgment). Use when the user types output-compress, /compress, "compress lite|full|ultra", or asks to shorten/condense internal or scratch output. Do NOT use for: the final user-facing response language, safety/irreversible-action confirmations, contract fields (Goal/Non-goals/Done-when/Return), audit or review findings that must stay verbatim, or as a default/always-on behavior.'
 metadata:
-  version: 1.4.0
+  version: 1.4.1
 ---
 
 # Output-Compress — tiered, whitelist-safe, mechanically verified compression
@@ -211,8 +211,8 @@ pacer — see `compress`/`compress_msg` in its output schema.
 `HANDOFF_HALT`. These verdicts decide when to preserve work; hook execution and host
 scheduling are not deterministic.
 
-Codex's v1.4.0 helper is packet-backed and memory-assisted. Packet writing is opt-in
-(`OC_CODEX_HANDOFF_PACKET=1`, default off) and defaults to `${cwd}/.codex/handoffs`,
+Codex's v1.4.1 helper is packet-backed and memory-assisted. Packet writing is opt-in
+(`OC_CODEX_HANDOFF_PACKET=1`, default off) and defaults to the git root's `.codex/handoffs`,
 configurable with `OC_CODEX_HANDOFF_DIR`; this can create untracked repo metadata. The
 JSON packet is authoritative and the derived Markdown is never read for control flow.
 Only an allowlisted pacer summary is stored; access tokens, authorization headers,
@@ -221,13 +221,22 @@ are excluded. The helper validates verdict mtime (default max age 600 seconds), 
 accepts a newly generated verdict from `--refresh`; stale `HANDOFF_PREP` is ignored.
 Codex memory is advisory only and is not claimed to be synchronized.
 
-For `HANDOFF_PREP`, the helper gives the Codex host `resume_at`, a name, and a prompt
-containing `handoff_id` and packet path. The helper does not create automation. For
-`HANDOFF_HALT`, the packet is halted and no wake is provided. `SessionStart` with
-`source=compact|resume` is the resume injection point; `PostCompact` emits no
+New packets remain `pending` until `--write-packet` validates seven nonblank bounded fields
+and records a complete git-root/worktree/HEAD/status guard. Non-Git directories and
+untracked hashing beyond the guard budget do not become ready. Only then does `HANDOFF_PREP` give the
+Codex host `resume_at`, a stable heartbeat name, and a prompt containing exact
+`handoff_id` and packet path. The helper does not create automation. `--resume-context`
+requires the exact ID/path, a matching host receipt, and rejects repository drift. For `HANDOFF_HALT`, the packet
+becomes halted after checkpoint validation and no wake is provided. `SessionStart` with
+`source=resume` injects only scheduled/resuming packets, while same-task `source=compact`
+may inject ready state. `PostCompact` emits no
 `additionalContext` because that event does not support it. See `USAGE.md` §7.
 
 ## Changelog
+
+- **1.4.1** (2026-07-13): added validated checkpoint writes, exact-ID resume, repository
+  drift guards, heartbeat receipts, strict `--refresh`, crash-stale lock recovery,
+  synchronized Markdown views, git-root packet paths, and complete `SessionStart` wiring.
 
 - **1.4.0** (2026-07-13): replaced the Codex helper's prior handoff wording with an opt-in
   packet-backed, memory-assisted control plane: atomic allowlisted JSON packets,
@@ -236,7 +245,7 @@ containing `handoff_id` and packet path. The helper does not create automation. 
 
 - **1.3.0–1.2.0** (2026-07-13): prior handoff-aware pacing releases. Their advisory
   verdict fields remain provider-neutral; Codex control semantics are defined by the
-  v1.4.0 packet-backed helper above.
+  v1.4.1 packet-backed helper above.
 - **1.1.0** (2026-07-12): added `scripts/fidelity-check.py --coverage --original
   <file>` pre-check mode (§2); added the Coverage 前置判斷 note, the contract-fields
   whole-block hard rule (§3 item 6), the rewrite≠delete quantifier case (§4), and the

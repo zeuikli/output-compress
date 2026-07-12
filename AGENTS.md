@@ -119,11 +119,14 @@ advisory verdicts only; do not treat hook execution or scheduling as determinist
 
 Codex has an opt-in packet-backed, memory-assisted helper at
 `scripts/codex-handoff.py`. With `OC_CODEX_HANDOFF_PACKET=1`, a fresh handoff verdict
-is persisted as an atomic JSON packet under `${cwd}/.codex/handoffs` (override with
+is persisted as an atomic pending JSON packet under the git root's `.codex/handoffs` (override with
 `OC_CODEX_HANDOFF_DIR`), with a derived Markdown view. The JSON packet is authoritative;
 Codex memory is advisory and the helper never writes `~/.codex/memories`. Packet files
 may be untracked repo metadata. `--refresh` accepts only a newly generated verdict;
-without refresh, the default verdict freshness window is 600 seconds. The helper only
-provides `resume_at`, a name, and a prompt containing `handoff_id` and packet path for
-the Codex host automation tool; it does not create automation. `HANDOFF_HALT` never
-provides a wake instruction. See `USAGE.md` §7.
+without refresh, the default verdict freshness window is 600 seconds. The agent must
+use `--write-packet` to validate seven nonblank checkpoint fields and a complete Git
+repository guard before PREP becomes ready. The helper then provides `resume_at`, a stable name, and an exact-ID/path prompt
+for a same-task thread heartbeat; it does not create automation. Resume through
+record host receipts with `--mark-scheduled`, resume the scheduled packet with
+`--resume-context`, and finish with
+`--mark-complete`. `HANDOFF_HALT` never provides a wake instruction. See `USAGE.md` §7.

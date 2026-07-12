@@ -151,15 +151,19 @@ Ask me these two yes/no questions, then act:
    with `OC_CODEX_HANDOFF_PACKET=1` (default off), defaults to `.codex/handoffs`, and
    may create untracked repo metadata. The JSON packet is authoritative; memory is
    advisory only and is not synchronized. The helper never writes `~/.codex/memories`
-   or creates automation. It gives the host only `resume_at`, a name, and a prompt
-   containing `handoff_id` and packet path. `HANDOFF_HALT` never creates a wake.
+   or creates automation. A new packet remains pending until `--write-packet` validates
+   its seven nonblank checkpoint fields and complete Git repository guard. PREP then gives the host
+   `resume_at`, a stable thread-heartbeat name, and an exact-ID/path prompt;
+   after `--mark-scheduled`, `--resume-context` rejects repo drift. `HANDOFF_HALT` never creates a wake.
    Tunables: `OC_HANDOFF_PCT` (90), `OC_HANDOFF_LEFT_H` (0.5),
    `OC_HANDOFF_MAX` (2), `OC_HANDOFF_RESUME_DELAY_MIN` (3), and
    `OC_CODEX_HANDOFF_MAX_AGE_S` (600).
 
    For Codex packet wiring, set `OC_CODEX_HANDOFF_PACKET=1` and register
-   `scripts/codex-handoff.py --refresh` as the `UserPromptSubmit` hook. `--refresh`
-   accepts only a newly generated verdict; without it stale verdicts are rejected.
+   `scripts/codex-handoff.py --refresh` as the `UserPromptSubmit` hook plus the same
+   helper as `SessionStart` with matcher `compact|resume`. `--refresh` accepts only a
+   newly generated verdict. After writing the hook config, use `/hooks` to review and
+   trust the exact definitions; project-local hooks also require a trusted project.
 
 ## Step 4.5 — Optional: advisory contract-field lint hook (recipe only — ask before installing)
 
