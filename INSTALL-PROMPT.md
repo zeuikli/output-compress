@@ -138,6 +138,17 @@ Ask me these two yes/no questions, then act:
    `${CODEX_HOME:-~/.codex}/auth.json` without printing token material. If no, skip —
    the skill works fully without it.
 
+   Once pace coupling is wired, **handoff-aware pacing** comes with it: when the quota
+   window is nearly exhausted (`used_pct >= 90%` and `< 0.5h` left), the pacer emits a
+   `HANDOFF_PREP` / `HANDOFF_HALT` message telling me to persist a handoff to memory +
+   commit/push and (PREP only) schedule a self-wake at `resume_at`. The memory write and
+   self-wake are **delegated to my platform** (on Claude Code: Auto Memory / a handoff
+   skill / `git push`, and `/schedule` for the wake) — the pacer only decides *when*. Ask
+   me whether to wire the self-wake mechanically (a hook reading the `handoff` /
+   `resume_at` fields) or leave it for me to act on from the injected text (default =
+   leave it). Tunables: `OC_HANDOFF_PCT` (90), `OC_HANDOFF_LEFT_H` (0.5), `OC_HANDOFF_MAX`
+   (2, the consecutive-window circuit breaker), `OC_HANDOFF_RESUME_DELAY_MIN` (3).
+
 ## Step 4.5 — Optional: advisory contract-field lint hook (recipe only — ask before installing)
 
 If I'm on Claude Code and ask for it, this recipe wires a **PreToolUse** hook that

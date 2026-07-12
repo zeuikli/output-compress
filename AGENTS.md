@@ -112,3 +112,11 @@ default level. The fidelity gate is unaffected either way.
 The pacer also emits an absolute-threshold `compress`/`compress_msg` pair — orthogonal
 to the burn-rate verdict, fires even when `ON_PACE` — that bumps one level at 80% used
 and jumps to the reader-tier cap at 95%; see `SKILL.md` §"Absolute-threshold escalation".
+
+It also emits **handoff states** when the window is nearly exhausted (`used_pct >= 90%`
+and `< 0.5h` left): `HANDOFF_PREP` (with a machine-readable `handoff` / `resume_at` pair)
+tells you to persist a handoff to memory + commit/push and schedule a resume — or notify
+the user — and `HANDOFF_HALT` is a consecutive-window circuit breaker that stops the
+self-wake loop. On Codex, act on the injected `message` yourself: the memory write and
+any self-wake are your platform's job (the pacer only decides *when*). See `USAGE.md` §7
+"Handoff-aware pacing" and the `OC_HANDOFF_*` tunables.

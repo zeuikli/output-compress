@@ -9,10 +9,27 @@ level adjustment"):
   ON_PACE (within +/-15pp)                 : default level, no injection (zero noise)
   BEHIND  (burn < elapsed - 15pp, <2h left): default level; headroom to spare
 
+Handoff states (fire before AHEAD/BEHIND when the window is nearly exhausted — the
+quota is about to run out with almost no window time left, so the priority shifts from
+pacing to *not losing work*):
+
+  HANDOFF_PREP (used >= 90% AND < 0.5h left in window): persist a handoff to your
+      agent's memory now (task goal, Done-when, what's tried, next action) and commit/
+      push, then — if your platform supports it — schedule a self-wake shortly after
+      the window resets to resume; otherwise notify the user to resume then. The memory
+      write and the scheduling are DELEGATED to your environment's own auto-memory /
+      handoff skill / scheduler — this signal only decides WHEN to hand off.
+  HANDOFF_HALT (the handoff threshold is hit in >MAX consecutive windows): only wrap
+      up and persist the handoff — do NOT schedule another self-wake. Repeatedly
+      burning consecutive windows is a runaway / goal-drift signal, so this circuit
+      breaker stops the auto-wake loop and waits for the user.
+
 Each verdict also carries a machine-readable `fanout` field (AHEAD ->
-"prefer-lower-tier", BEHIND -> "burst", ON_PACE/other -> "normal") so external
+"prefer-lower-tier", BEHIND -> "burst", ON_PACE/handoff/other -> "normal") so external
 hooks/skills can consume model-allocation pacing guidance mechanically instead of
-parsing the human-readable `message` text.
+parsing the human-readable `message` text. Handoff states additionally carry a
+`handoff` field ("prep" | "halt" | "") and, for "prep", a `resume_at` field (ISO UTC of
+when a self-wake should fire) so a hook can wire the handoff/self-wake mechanically.
 
 It also arms a one-shot user notification when burn first crosses NOTIFY_PCT
 (default 80%) in a window — how you deliver it (push tool, desktop notify, email)
@@ -45,6 +62,10 @@ Environment overrides:
     OC_NOTIFY_PCT         notify threshold percent (default 80; <=0 disables)
     OC_COMPRESS_WARN_PCT  compression bump threshold percent (default 80)
     OC_COMPRESS_URGE_PCT  compression cap threshold percent  (default 95)
+    OC_HANDOFF_PCT        handoff used% threshold            (default 90; <=0 disables)
+    OC_HANDOFF_LEFT_H     handoff max window-hours-left      (default 0.5)
+    OC_HANDOFF_MAX        consecutive handoff windows before the HALT circuit breaker (default 2)
+    OC_HANDOFF_RESUME_DELAY_MIN  minutes after reset to schedule the self-wake (default 3)
 
 Usage: usage-pacer.py [--json] ; --self-test runs the scenario asserts.
 Exit 0 always — this is advisory; a broken pacer must never block work.
@@ -66,8 +87,15 @@ BEHIND_DELTA = -15.0
 BEHIND_MIN_LEFT_H = 2.0
 COMPRESS_WARN_PCT = float(os.environ.get("OC_COMPRESS_WARN_PCT", "80"))
 COMPRESS_URGE_PCT = float(os.environ.get("OC_COMPRESS_URGE_PCT", "95"))
+# Handoff state machine (fires before AHEAD/BEHIND — priority shifts to not losing work)
+HANDOFF_PCT = float(os.environ.get("OC_HANDOFF_PCT", "90"))
+HANDOFF_MIN_LEFT_H = float(os.environ.get("OC_HANDOFF_LEFT_H", "0.5"))
+HANDOFF_MAX_CONSECUTIVE = int(float(os.environ.get("OC_HANDOFF_MAX", "2")))
+HANDOFF_RESUME_DELAY_MIN = float(os.environ.get("OC_HANDOFF_RESUME_DELAY_MIN", "3"))
+# Circuit-breaker counter keyed by resets_at (a new window -> a new resets_at -> +1)
+HANDOFF_COUNT_FILE = pathlib.Path(str(VERDICT_FILE) + ".handoff-count")
 
-FANOUT = {"AHEAD": "prefer-lower-tier", "BEHIND": "burst"}  # ON_PACE/other -> "normal"
+FANOUT = {"AHEAD": "prefer-lower-tier", "BEHIND": "burst"}  # ON_PACE/handoff/other -> "normal"
 
 MSG = {
     "AHEAD": ("PACE AHEAD ({d:+.0f}pp): burning quota faster than the window elapses - "
@@ -79,6 +107,21 @@ MSG = {
                "default compression level; parallelism can go up (fanout=burst) - burst "
                "fan-out remains subject to any external delegation/budget gate the host "
                "workspace may run (e.g. a fan-out concurrency cap or spend limiter)."),
+    "HANDOFF_PREP": (
+        "PACE HANDOFF-PREP (used {u:.0f}%, {left_m:.0f} min left in window, consecutive "
+        "#{n}): quota is nearly exhausted with almost no window time left. Persist a "
+        "handoff NOW — write the task goal, Done-when, what's been tried, and the next "
+        "action into your agent's memory (delegate to your auto-memory / handoff skill) "
+        "and commit + push work in progress. Then hand off: if your platform can schedule "
+        "a self-wake, schedule one shortly after the window resets ({resume}) to resume; "
+        "otherwise notify the user to resume then. This signal decides WHEN — the memory "
+        "write and the scheduling are done by your environment's own mechanisms."),
+    "HANDOFF_HALT": (
+        "PACE HANDOFF-HALT (the handoff threshold was hit in {n} consecutive windows, "
+        "over the circuit-breaker limit of {max}): only wrap up and persist the handoff "
+        "— do NOT schedule another self-wake. Repeatedly burning through consecutive "
+        "windows is a runaway / goal-drift signal; wait for the user to confirm before "
+        "continuing."),
 }
 
 
@@ -89,14 +132,37 @@ def compute(used_pct: float, resets_at_iso: str, now: datetime.datetime | None =
     elapsed_frac = min(1.0, max(0.0, (WINDOW_H - left_h) / WINDOW_H))
     ideal = elapsed_frac * 100
     delta = used_pct - ideal
-    if delta > AHEAD_DELTA:
+    handoff = ""
+    handoff_n = 0
+    resume_at = ""
+    if HANDOFF_PCT > 0 and used_pct >= HANDOFF_PCT and left_h < HANDOFF_MIN_LEFT_H:
+        # circuit-breaker count keyed by resets_at (new window -> new resets_at -> +1)
+        try:
+            prev = HANDOFF_COUNT_FILE.read_text().split("|")
+            handoff_n = int(prev[1]) + 1 if prev[0] != resets_at_iso else int(prev[1])
+        except Exception:
+            handoff_n = 1
+        handoff_n = max(handoff_n, 1)
+        try:
+            HANDOFF_COUNT_FILE.write_text(f"{resets_at_iso}|{handoff_n}")
+        except Exception:
+            pass
+        if handoff_n >= HANDOFF_MAX_CONSECUTIVE + 1:
+            verdict, handoff = "HANDOFF_HALT", "halt"
+        else:
+            verdict, handoff = "HANDOFF_PREP", "prep"
+            resume_at = (reset_at + datetime.timedelta(minutes=HANDOFF_RESUME_DELAY_MIN)
+                         ).astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    elif delta > AHEAD_DELTA:
         verdict = "AHEAD"
     elif delta < BEHIND_DELTA and left_h < BEHIND_MIN_LEFT_H:
         verdict = "BEHIND"
     else:
         verdict = "ON_PACE"
     fanout = FANOUT.get(verdict, "normal")
-    msg = MSG.get(verdict, "").format(d=delta, left=left_h)
+    msg = MSG.get(verdict, "").format(d=delta, left=left_h, u=used_pct,
+                                      left_m=left_h * 60, resume=resume_at,
+                                      n=handoff_n, max=HANDOFF_MAX_CONSECUTIVE)
     # once-per-window notify arm: flag keyed by resets_at (changes every window)
     notify_user = ""
     if NOTIFY_PCT > 0 and used_pct >= NOTIFY_PCT:
@@ -128,7 +194,8 @@ def compute(used_pct: float, resets_at_iso: str, now: datetime.datetime | None =
             "ideal_pct": round(ideal, 1),
             "delta_pp": round(delta, 1), "window_left_h": round(left_h, 2),
             "message": msg, "notify_user": notify_user,
-            "compress": compress, "compress_msg": compress_msg}
+            "compress": compress, "compress_msg": compress_msg,
+            "handoff": handoff, "resume_at": resume_at}
 
 
 def _validate(used_pct: float, resets_at_iso: str,
@@ -169,9 +236,11 @@ def _validate(used_pct: float, resets_at_iso: str,
 def self_test() -> int:
     now = datetime.datetime(2026, 1, 1, 12, 0, tzinfo=datetime.timezone.utc)
     NOTIFY_FLAG.unlink(missing_ok=True)
+    HANDOFF_COUNT_FILE.unlink(missing_ok=True)
     a = compute(60, "2026-01-01T16:00:00Z", now)          # 20% elapsed, 60% burned
     assert a["verdict"] == "AHEAD", a
     assert a["fanout"] == "prefer-lower-tier", a
+    assert a["handoff"] == "" and a["resume_at"] == "", a
     b = compute(55, "2026-01-01T14:30:00Z", now)          # 50% elapsed, 55% burned
     assert b["verdict"] == "ON_PACE" and b["notify_user"] == "", b
     assert b["fanout"] == "normal", b
@@ -196,6 +265,22 @@ def self_test() -> int:
     assert e4["compress"] == "warn", e4
     e5 = compute(95.0, "2026-01-01T14:30:00Z", now)
     assert e5["compress"] == "urge", e5
+    # handoff state machine: PREP when used>=90 AND <0.5h left; takes priority over AHEAD
+    HANDOFF_COUNT_FILE.unlink(missing_ok=True)
+    hp = compute(95, "2026-01-01T12:18:00Z", now)         # 18 min left, used 95
+    assert hp["verdict"] == "HANDOFF_PREP" and hp["handoff"] == "prep", hp
+    assert hp["resume_at"] == "2026-01-01T12:21:00Z", hp  # reset + 3 min
+    assert "12:21:00Z" in hp["message"], hp
+    assert hp["fanout"] == "normal", hp                   # handoff -> normal fan-out
+    hp2 = compute(95, "2026-01-01T17:18:00Z", now + datetime.timedelta(hours=5))
+    assert hp2["verdict"] == "HANDOFF_PREP", hp2          # 2nd consecutive window -> still PREP
+    hp3 = compute(95, "2026-01-01T22:18:00Z", now + datetime.timedelta(hours=10))
+    assert hp3["verdict"] == "HANDOFF_HALT" and hp3["handoff"] == "halt", hp3
+    assert hp3["resume_at"] == "", hp3                    # HALT -> circuit breaker, no self-wake
+    HANDOFF_COUNT_FILE.unlink(missing_ok=True)
+    # handoff needs BOTH conditions: high used% but ample time left is NOT handoff
+    hn = compute(95, "2026-01-01T14:30:00Z", now)         # used 95 but 2.5h left
+    assert hn["verdict"] != "HANDOFF_PREP" and hn["handoff"] == "", hn
     # sanity gate: out-of-range used_pct rejected
     try:
         _validate(150, "2026-01-01T14:30:00Z", now)
@@ -212,7 +297,7 @@ def self_test() -> int:
     v_used, v_reset = _validate(50, "2026-01-01T14:30:00", now)
     assert v_used == 50.0 and v_reset == "2026-01-01T14:30:00Z", (v_used, v_reset)
     print("SELF-TEST PASS (AHEAD/ON_PACE/BEHIND/NOTIFY once-per-window/"
-          "COMPRESS-threshold/FANOUT/sanity-gate)")
+          "COMPRESS-threshold/HANDOFF-PREP/HALT-circuit-breaker/FANOUT/sanity-gate)")
     return 0
 
 

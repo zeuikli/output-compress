@@ -2,7 +2,7 @@
 name: output-compress
 description: 'Tiered output compression (caveman-derived): an explicitly opt-in, token-saving rewrite mode with a never-compress whitelist, model-tier compression caps, and a deterministic fidelity gate (no LLM self-judgment). Use when the user types output-compress, /compress, "compress lite|full|ultra", or asks to shorten/condense internal or scratch output. Do NOT use for: the final user-facing response language, safety/irreversible-action confirmations, contract fields (Goal/Non-goals/Done-when/Return), audit or review findings that must stay verbatim, or as a default/always-on behavior.'
 metadata:
-  version: 1.1.0
+  version: 1.2.0
 ---
 
 # Output-Compress — tiered, whitelist-safe, mechanically verified compression
@@ -206,8 +206,32 @@ straight to the cap. This fires even when `ON_PACE` (a window can be right on sc
 and still be at 83% used). Dedup on state change belongs to the injecting hook, not the
 pacer — see `compress`/`compress_msg` in its output schema.
 
+**Handoff-aware pacing (nearly-exhausted window)**: when `used_pct >= 90%` **and**
+`< 0.5h` remains in the window, the pacer overrides the burn-rate verdict with a handoff
+state — at that point the priority shifts from pacing to *not losing work*:
+
+- **HANDOFF_PREP**: persist a handoff to memory (task goal / Done-when / what's been
+  tried / next action) and commit + push, then schedule a self-wake shortly after the
+  window resets to resume — or, where no scheduler exists, notify the user to resume then.
+- **HANDOFF_HALT**: after `OC_HANDOFF_MAX` (default 2) consecutive windows hit the
+  threshold, only wrap up and persist — do **not** self-wake again. This is a circuit
+  breaker: repeatedly burning through whole windows unattended is a runaway / goal-drift
+  signal, so control returns to the user.
+
+The handoff **execution is delegated** — the pacer decides *when* to hand off (and emits
+a machine-readable `handoff` / `resume_at` pair), while the memory write and self-wake
+are the host's own mechanisms (on Claude Code: Auto Memory / a handoff skill / `git
+push`, plus `/schedule` for the wake). See `USAGE.md` §7 "Handoff-aware pacing" for
+wiring and the `OC_HANDOFF_*` tunables.
+
 ## Changelog
 
+- **1.2.0** (2026-07-13): pace coupling gained **handoff-aware states** in
+  `scripts/usage-pacer.py` — `HANDOFF_PREP` / `HANDOFF_HALT` fire when the quota window
+  is nearly exhausted (`used_pct >= 90%` and `< 0.5h` left), emitting a `handoff` /
+  `resume_at` signal that delegates the memory write + self-wake to the host, with a
+  consecutive-window circuit breaker (`OC_HANDOFF_*` tunables). See the new
+  "Handoff-aware pacing" note here and in `USAGE.md` §7.
 - **1.1.0** (2026-07-12): added `scripts/fidelity-check.py --coverage --original
   <file>` pre-check mode (§2); added the Coverage 前置判斷 note, the contract-fields
   whole-block hard rule (§3 item 6), the rewrite≠delete quantifier case (§4), and the
