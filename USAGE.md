@@ -353,8 +353,16 @@ off; delivering the notification and performing the handoff/self-wake are your
 platform's job. The pacer's contract ends at "emit each signal exactly once,
 deterministically."
 
-**Codex / AGENTS.md agents:** no hook mechanism is needed — keep the `AGENTS.md`
-section for this skill permanently in your project's `AGENTS.md`. It's already loaded
-into context every session, so it behaves as always-on advisory without extra wiring;
-gate actual invocation with a phrase like "when I say compress" if you still want it
-opt-in rather than continuously applied.
+**Codex / AGENTS.md agents:** Codex can use lifecycle hooks for automatic pacer
+injection, including a `UserPromptSubmit` command hook for per-turn advisory text and
+`PostCompact` / `SessionStart` hooks for compaction/session resets. For the portable
+fallback, keep the `AGENTS.md` section permanently in your project's `AGENTS.md`: it is
+loaded into context every session, so it behaves as always-present advisory without
+extra hook wiring. Gate actual compression with a phrase like "when I say compress" if
+you still want opt-in behavior.
+
+For `HANDOFF_PREP`, Codex can wire `resume_at` to a scheduled task / heartbeat that
+returns to the same task after the quota window resets. The pacer still does not create
+that automation by itself: the hook or host workflow must read `handoff` / `resume_at`,
+persist the handoff summary, and ask Codex to schedule the follow-up. If that host
+automation is not available, degrade to notifying the user to resume at `resume_at`.

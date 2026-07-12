@@ -2,7 +2,7 @@
 name: output-compress
 description: 'Tiered output compression (caveman-derived): an explicitly opt-in, token-saving rewrite mode with a never-compress whitelist, model-tier compression caps, and a deterministic fidelity gate (no LLM self-judgment). Use when the user types output-compress, /compress, "compress lite|full|ultra", or asks to shorten/condense internal or scratch output. Do NOT use for: the final user-facing response language, safety/irreversible-action confirmations, contract fields (Goal/Non-goals/Done-when/Return), audit or review findings that must stay verbatim, or as a default/always-on behavior.'
 metadata:
-  version: 1.2.0
+  version: 1.2.1
 ---
 
 # Output-Compress — tiered, whitelist-safe, mechanically verified compression
@@ -226,6 +226,9 @@ wiring and the `OC_HANDOFF_*` tunables.
 
 ## Changelog
 
+- **1.2.1** (2026-07-13): clarified Codex wiring docs: Codex can use hooks for
+  per-turn pacer injection and scheduled task / heartbeat automation for self-wake;
+  `AGENTS.md` remains the portable fallback, not the only Codex path.
 - **1.2.0** (2026-07-13): pace coupling gained **handoff-aware states** in
   `scripts/usage-pacer.py` — `HANDOFF_PREP` / `HANDOFF_HALT` fire when the quota window
   is nearly exhausted (`used_pct >= 90%` and `< 0.5h` left), emitting a `handoff` /
