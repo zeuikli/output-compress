@@ -23,9 +23,10 @@ your provider exposes usage — a cron curl, a CLI wrapper, an SDK script:
 
     {"used_pct": 63.0, "resets_at": "2026-07-11T21:30:00Z"}
 
-On Claude subscriptions the bundled companion `claude-usage-fetch.py` can populate
-this file for you from the official usage endpoint (run it best-effort right before
-this pacer); bring-your-own JSON stays the general, provider-agnostic mechanism.
+On Claude subscriptions or Codex/ChatGPT-auth sessions, bundled companions
+(`claude-usage-fetch.py`, `codex-usage-fetch.py`) can populate this file for you from
+the provider usage endpoint (run one best-effort right before this pacer);
+bring-your-own JSON stays the general, provider-agnostic mechanism.
 
 Absolute-threshold compression escalation (orthogonal to the pace verdict above -
 fires even when ON_PACE, because it tracks raw quota level, not burn rate):
