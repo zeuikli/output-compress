@@ -53,7 +53,10 @@ PATTERNS = {
 # Negation words: occurrence count must not drop (a mechanical approximation
 # for "the whole negated clause must survive"). Add your own language's
 # negation words here before first use.
-NEGATIONS = ["not", "never", "unless", "except", "no ", "cannot", "don't", "won't"]
+NEGATIONS = [
+    "not", "never", "unless", "except", "no ", "cannot", "don't", "won't",
+    "不能", "不要", "禁止", "沒有", "除非", "不可", "不得", "並非",
+]
 # 2026-07-12 (card3): quantifier bounds flip meaning silently when dropped
 # ("at most 3" -> "3"): same discipline as negations — count must not decrease.
 QUANTIFIER_BOUNDS = ["at most", "at least", "up to", "no more than", "fewer than", "最多", "至少", "不超過", "上限", "下限"]

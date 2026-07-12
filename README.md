@@ -21,15 +21,33 @@ cp -r output-compress ~/.claude/skills/
 
 Claude Code will pick up `SKILL.md`'s frontmatter automatically on next session start.
 
-**Codex:**
+**Codex Skill:**
+
+Install the repo root as a Codex skill into `$CODEX_HOME/skills`:
+
+```bash
+python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py \
+  --repo zeuikli/output-compress --path . --name output-compress
+```
+
+Codex will make the `SKILL.md` frontmatter available on the next turn or new session.
+If the destination already exists, remove or rename the old
+`$CODEX_HOME/skills/output-compress` directory only after confirming you do not need
+that copy.
+
+**Codex AGENTS.md fallback / always-loaded advisory:**
 
 Append the section from `AGENTS.md` (everything after the `---`) into your project's
 own `AGENTS.md` file, or copy this whole directory into your project and add a pointer
-line to your `AGENTS.md`, e.g. `See output-compress/AGENTS.md for the compression skill.`
+line to your `AGENTS.md`, e.g. `See output-compress/AGENTS.md for the compression
+advisory.`
 
-Either way, also copy `scripts/fidelity-check.py` into your project so the gate command
-in the docs resolves to a real path. `scripts/usage-pacer.py` is optional — only needed
-for the pace-coupling described in `SKILL.md` / `USAGE.md` §7.
+For the AGENTS.md fallback, also copy `scripts/fidelity-check.py` into your project so
+the gate command in the docs resolves to a real path. With a Codex skill install, use
+the installed skill path, e.g.
+`$CODEX_HOME/skills/output-compress/scripts/fidelity-check.py`. `scripts/usage-pacer.py`
+is optional — only needed for the pace-coupling described in `SKILL.md` / `USAGE.md`
+§7.
 
 ## Quickstart: fidelity gate demo
 
