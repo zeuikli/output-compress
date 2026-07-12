@@ -114,15 +114,16 @@ to the burn-rate verdict, fires even when `ON_PACE` — that bumps one level at 
 and jumps to the reader-tier cap at 95%; see `SKILL.md` §"Absolute-threshold escalation".
 
 It also emits **handoff states** when the window is nearly exhausted (`used_pct >= 90%`
-and `< 0.5h` left): `HANDOFF_PREP` (with a machine-readable `handoff` / `resume_at` pair)
-tells you to persist a handoff to memory + commit/push and schedule a resume — or notify
-the user — and `HANDOFF_HALT` is a consecutive-window circuit breaker that stops the
-self-wake loop. On Codex, the pacer can feed a hook or host workflow, but the memory
-write and any scheduled task / heartbeat self-wake are still the platform's job (the
-pacer only decides *when*). See `USAGE.md` §7 "Handoff-aware pacing" and the
-`OC_HANDOFF_*` tunables.
+and `< 0.5h` left): `HANDOFF_PREP` and the circuit-breaker `HANDOFF_HALT`. These are
+advisory verdicts only; do not treat hook execution or scheduling as deterministic.
 
-For Codex auto-handoff wiring, use `scripts/codex-handoff.py --refresh` from a
-`UserPromptSubmit` command hook. It refreshes Codex usage, runs the pacer, deduplicates
-handoff windows, and injects developer context that tells Codex to persist the handoff
-checkpoint and create a thread scheduled task / heartbeat at `resume_at`.
+Codex has an opt-in packet-backed, memory-assisted helper at
+`scripts/codex-handoff.py`. With `OC_CODEX_HANDOFF_PACKET=1`, a fresh handoff verdict
+is persisted as an atomic JSON packet under `${cwd}/.codex/handoffs` (override with
+`OC_CODEX_HANDOFF_DIR`), with a derived Markdown view. The JSON packet is authoritative;
+Codex memory is advisory and the helper never writes `~/.codex/memories`. Packet files
+may be untracked repo metadata. `--refresh` accepts only a newly generated verdict;
+without refresh, the default verdict freshness window is 600 seconds. The helper only
+provides `resume_at`, a name, and a prompt containing `handoff_id` and packet path for
+the Codex host automation tool; it does not create automation. `HANDOFF_HALT` never
+provides a wake instruction. See `USAGE.md` §7.
