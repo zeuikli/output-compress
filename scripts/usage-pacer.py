@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""usage-pacer.py — portable 5h-window pacing companion for output-compress.
+"""usage-pacer.py — portable active-window pacing companion for output-compress.
 
 Compares your provider-quota burn rate against elapsed window time and emits a
 deterministic verdict the compression skill can couple to (SKILL.md "Pace-aware
@@ -34,7 +34,10 @@ is up to your hook; this script only guarantees the once-per-window semantics.
 Data source (decoupled from any provider): a small JSON file you refresh however
 your provider exposes usage — a cron curl, a CLI wrapper, an SDK script:
 
-    {"used_pct": 63.0, "resets_at": "2026-07-11T21:30:00Z"}
+    {"used_pct": 63.0, "resets_at": "2026-07-11T21:30:00Z", "window_h": 5.0}
+
+`window_h` is optional; provider feeders should supply the active primary-window
+duration when available. The pacer falls back to `OC_WINDOW_H` (default 5).
 
 On Claude subscriptions or Codex/ChatGPT-auth sessions, bundled companions
 (`claude-usage-fetch.py`, `codex-usage-fetch.py`) can populate this file for you from
@@ -135,11 +138,13 @@ MSG = {
 }
 
 
-def compute(used_pct: float, resets_at_iso: str, now: datetime.datetime | None = None) -> dict:
+def compute(used_pct: float, resets_at_iso: str, now: datetime.datetime | None = None,
+            window_h: float | None = None) -> dict:
     now = now or datetime.datetime.now(datetime.timezone.utc)
+    effective_window_h = window_h if window_h is not None else WINDOW_H
     reset_at = datetime.datetime.fromisoformat(resets_at_iso.replace("Z", "+00:00"))
     left_h = max(0.0, (reset_at - now).total_seconds() / 3600)
-    elapsed_frac = min(1.0, max(0.0, (WINDOW_H - left_h) / WINDOW_H))
+    elapsed_frac = min(1.0, max(0.0, (effective_window_h - left_h) / effective_window_h))
     ideal = elapsed_frac * 100
     delta = used_pct - ideal
     handoff = ""
@@ -205,11 +210,11 @@ def compute(used_pct: float, resets_at_iso: str, now: datetime.datetime | None =
             "delta_pp": round(delta, 1), "window_left_h": round(left_h, 2),
             "message": msg, "notify_user": notify_user,
             "compress": compress, "compress_msg": compress_msg,
-            "handoff": handoff, "resume_at": resume_at}
+            "handoff": handoff, "resume_at": resume_at, "window_h": effective_window_h}
 
 
-def _validate(used_pct: float, resets_at_iso: str,
-              now: datetime.datetime | None = None) -> tuple[float, str]:
+def _validate(used_pct: float, resets_at_iso: str, window_h: float | None = None,
+              now: datetime.datetime | None = None) -> tuple[float, str, float]:
     """Sanity-gate the loaded usage record before it drives a verdict.
 
     A dead container or a failed refresh cron can leave a stale usage file whose
@@ -222,6 +227,9 @@ def _validate(used_pct: float, resets_at_iso: str,
     (message carries the reason, surfaced verbatim in main()'s --json output).
     """
     now = now or datetime.datetime.now(datetime.timezone.utc)
+    effective_window_h = WINDOW_H if window_h is None else float(window_h)
+    if not (0.1 <= effective_window_h <= 24 * 31):
+        raise ValueError(f"window_h out of [0.1,744]: {effective_window_h}")
     if not (0.0 <= used_pct <= 100.0):
         raise ValueError(f"used_pct out of [0,100]: {used_pct} (stale/implausible used_pct)")
     txt = resets_at_iso.strip().replace("Z", "+00:00")
@@ -236,11 +244,11 @@ def _validate(used_pct: float, resets_at_iso: str,
         dt = dt.replace(tzinfo=datetime.timezone.utc)
     dt = dt.astimezone(datetime.timezone.utc)
     if dt < now - datetime.timedelta(hours=1) or \
-            dt > now + datetime.timedelta(hours=WINDOW_H + 1):
+            dt > now + datetime.timedelta(hours=effective_window_h + 1):
         raise ValueError(f"resets_at outside plausible window "
-                         f"(now-1h .. now+{WINDOW_H + 1:.0f}h): {resets_at_iso} "
+                         f"(now-1h .. now+{effective_window_h + 1:.0f}h): {resets_at_iso} "
                          f"(stale/implausible resets_at)")
-    return used_pct, dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return used_pct, dt.strftime("%Y-%m-%dT%H:%M:%SZ"), effective_window_h
 
 
 def self_test() -> int:
@@ -293,19 +301,21 @@ def self_test() -> int:
     assert hn["verdict"] != "HANDOFF_PREP" and hn["handoff"] == "", hn
     # sanity gate: out-of-range used_pct rejected
     try:
-        _validate(150, "2026-01-01T14:30:00Z", now)
+        _validate(150, "2026-01-01T14:30:00Z", now=now)
         assert False, "out-of-range used_pct should be rejected"
     except ValueError as ex:
         assert "stale/implausible used_pct" in str(ex), ex
     # sanity gate: implausible future resets_at rejected (now+10h > now+WINDOW_H+1h)
     try:
-        _validate(50, "2026-01-01T22:00:00Z", now)
+        _validate(50, "2026-01-01T22:00:00Z", now=now)
         assert False, "implausible future resets_at should be rejected"
     except ValueError as ex:
         assert "stale/implausible resets_at" in str(ex), ex
     # sanity gate: naive resets_at accepted and treated as UTC; plausible value passes
-    v_used, v_reset = _validate(50, "2026-01-01T14:30:00", now)
-    assert v_used == 50.0 and v_reset == "2026-01-01T14:30:00Z", (v_used, v_reset)
+    v_used, v_reset, v_window = _validate(50, "2026-01-01T14:30:00", None, now)
+    assert v_used == 50.0 and v_reset == "2026-01-01T14:30:00Z" and v_window == 5.0, (v_used, v_reset, v_window)
+    weekly = compute(33, "2026-01-05T12:00:00Z", now, 168.0)
+    assert weekly["window_h"] == 168.0 and weekly["verdict"] == "ON_PACE", weekly
     print("SELF-TEST PASS (AHEAD/ON_PACE/BEHIND/NOTIFY once-per-window/"
           "COMPRESS-threshold/HANDOFF-PREP/HALT-circuit-breaker/FANOUT/sanity-gate)")
     return 0
@@ -322,7 +332,8 @@ def main() -> int:
         cache = json.loads(USAGE_FILE.read_text())
         used = float(cache["used_pct"])
         reset = str(cache["resets_at"])
-        used, reset = _validate(used, reset)
+        window = float(cache["window_h"]) if "window_h" in cache else None
+        used, reset, window = _validate(used, reset, window)
     except Exception as e:
         no_data = {"verdict": "NO_DATA", "data_status": "NO_DATA",
                    "generated_at": datetime.datetime.now(datetime.timezone.utc
@@ -335,7 +346,7 @@ def main() -> int:
         if a.json:
             print(json.dumps(no_data))
         return 0  # fail-open: advisory must never block work
-    result = compute(used, reset)
+    result = compute(used, reset, window_h=window)
     result.update({"generated_at": datetime.datetime.now(datetime.timezone.utc
                   ).strftime("%Y-%m-%dT%H:%M:%SZ"),
                    "window_id": reset, "data_status": "OK"})

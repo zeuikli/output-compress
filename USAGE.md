@@ -247,8 +247,9 @@ fetch failure → it exits silently and the pacer sees no data. Env overrides:
 `CODEX_HOME`. Treat `${CODEX_HOME:-~/.codex}/auth.json` like a password; never commit
 it or paste token material into chats/logs.
 
-The pacer only needs the primary five-hour window, but the Codex feeder also preserves
-non-PII usage extras when the endpoint returns them: seven-day usage, `credits`,
+The pacer uses the active primary window and its `window_h` when the provider supplies
+`limit_window_seconds` (otherwise it falls back to 5 hours). The Codex feeder also
+preserves non-PII usage extras when the endpoint returns them: seven-day usage, `credits`,
 `code_review_rate_limit`, `additional_rate_limits`, and `rate_limit_reset_credits`.
 It deliberately does not write account identifiers such as email, user id, or account id
 into `OC_USAGE_FILE`.
@@ -324,20 +325,21 @@ the priority is *not losing work* rather than pacing it:
 
 | `verdict` | `handoff` | `resume_at` | packet-backed helper result |
 |---|---|---|---|
-| `HANDOFF_PREP` | `"prep"` | ISO UTC (reset + 3 min) | with packet opt-in, persist an allowlisted JSON packet and give the host `resume_at`, name, and packet prompt |
-| `HANDOFF_HALT` | `"halt"` | `""` | with packet opt-in, persist a halted packet only; do **not** provide a wake |
+| `HANDOFF_PREP` | `"prep"` | ISO UTC (reset + 3 min) | with packet opt-in, persist a pending allowlisted skeleton; after validated `--write-packet`, expose the stable heartbeat request |
+| `HANDOFF_HALT` | `"halt"` | `""` | with packet opt-in, persist a pending skeleton; validated `--write-packet` changes it to `halted` and never provides a wake |
 
 The pacer verdict is advisory and its human-readable `message` is not a control input
 for the Codex helper. Hook success does not prove packet persistence or scheduling.
 Codex's packet-backed, memory-assisted helper is opt-in (`OC_CODEX_HANDOFF_PACKET=1`)
-and defaults to `${cwd}/.codex/handoffs` (`OC_CODEX_HANDOFF_DIR` overrides it). The JSON
+and defaults to the git root's `.codex/handoffs` (`OC_CODEX_HANDOFF_DIR` overrides it). The JSON
 packet is authoritative; Markdown is a derived view with a digest and is never read by
 the helper. Packet files may be untracked repo metadata. The helper never writes
 `~/.codex/memories` and does not claim memory synchronization.
 
-The packet stores only an explicit allowlist: schema/status/ID/timestamps, `prep|halt`,
-cwd, safe pacer scalar fields, source verdict hash/mtime, a fixed checkpoint template,
-and a fixed resume prompt. It excludes access tokens, authorization headers, cookies,
+The packet stores only an explicit allowlist: schema/status/revision/ID/timestamps,
+`prep|halt`, git-root/worktree/HEAD/status metadata, safe pacer scalar fields, a bounded
+checkpoint, schedule receipt, and a fixed resume prompt. It excludes access tokens,
+authorization headers, cookies,
 session IDs, turn IDs, unknown verdict keys, hook prompt fields, and free-form messages.
 The handoff ID uses repo/session hashes, window ID, handoff, and canonical safe verdict
 inputs; it does not use `used_pct`.
@@ -369,22 +371,55 @@ The bundled helper is opt-in and fail-open:
 python3 scripts/codex-handoff.py --refresh
 ```
 
-`--refresh` runs the optional feeder and pacer, then accepts the verdict only when the
-pacer successfully produced a changed verdict file. Without `--refresh`, the default
-verdict max age is 600 seconds (`OC_CODEX_HANDOFF_MAX_AGE_S`). `NO_DATA`, stale,
-malformed, completed, halted, corrupt, or oversized packets are ignored by resume.
-With `OC_CODEX_HANDOFF_PACKET=1`, `HANDOFF_PREP` creates an atomic JSON packet and
-derived Markdown, then outputs only `resume_at`, a name, and a prompt containing the
-`handoff_id` and packet path for the Codex host automation tool. It does not create
-automation. `HANDOFF_HALT` persists status `halted` and provides no wake. On any
+`--refresh` runs the optional feeder and pacer and rejects the verdict unless that run
+successfully produced a changed verdict file. Without `--refresh`, the default
+verdict max age is 600 seconds (`OC_CODEX_HANDOFF_MAX_AGE_S`). `NO_DATA` and stale
+verdicts are ignored. Malformed, completed, halted, corrupt, oversized, or PREP packets
+more than 24 hours past `resume_at` are ignored by resume.
+With `OC_CODEX_HANDOFF_PACKET=1`, either handoff first creates an atomic `pending` JSON
+packet and derived Markdown. The agent must write all seven checkpoint fields through
+`--write-packet HANDOFF_ID --checkpoint-file PATH --packet-path PACKET`; unknown fields,
+blank or oversized values, obvious credentials, symlinks, repository mismatches, non-Git
+working directories, and incomplete untracked-content guards are rejected. Exceeding the
+1,000-file or 64 MiB untracked hashing budget is guard-incomplete, never a verified match.
+After a PREP checkpoint becomes `ready`, the helper outputs `resume_at`, a stable name,
+and a prompt containing exact `handoff_id` and packet path for a same-task thread
+heartbeat. It does not create automation. HALT becomes `halted` only after checkpoint
+validation and provides no wake. On any
 persistence failure the hook exits 0 and emits common `systemMessage`:
 `HANDOFF_NOT_PERSISTED`; no schedule instruction is emitted.
 
-Useful maintenance commands are `--dry-run`, `--self-test`, and
-`--mark-complete HANDOFF_ID`. The last accepts only the 64-hex handoff ID and is
-atomic/idempotent for an active packet.
+The checkpoint file is a JSON object containing exactly `goal`, `done_when`, `tried`,
+`next_action`, `git_status`, `verification`, and `risks`, each as a string. After host
+heartbeat creation, record its opaque receipt with:
 
-Register it as a Codex `UserPromptSubmit` command hook. Project-level
+```bash
+python3 scripts/codex-handoff.py --mark-scheduled HANDOFF_ID \
+  --automation-id ID --packet-path PACKET
+```
+
+Repeating the same receipt is idempotent; a different receipt is rejected so duplicate
+host heartbeats cannot silently overwrite evidence.
+
+The heartbeat prompt must call `--resume-context HANDOFF_ID --packet-path PACKET`; this
+compares repo/worktree/HEAD, porcelain status, tracked diff, and bounded untracked-content
+digests before moving a `scheduled` packet to `resuming`; a merely `ready` packet cannot
+resume without a host receipt. Finish with:
+
+```bash
+python3 scripts/codex-handoff.py --mark-complete HANDOFF_ID --packet-path PACKET
+```
+
+JSON state transitions are atomic and idempotent. Markdown is a best-effort derived view;
+an idempotent retry repairs it when the JSON transition succeeded first. A Markdown
+failure reports `markdown_synced=false` or `HANDOFF_DERIVED_VIEW_FAILED` while retaining
+the truthful `packet_persisted=true` state.
+
+`SessionStart(source=resume)` injects only `scheduled|resuming` packets. The same-task
+`source=compact` path may inject `ready` so compact continuation does not require a host
+heartbeat receipt; it still does not execute the exact resume transition.
+
+Register it as Codex `UserPromptSubmit` and `SessionStart` command hooks. Project-level
 `.codex/hooks.json` example:
 
 ```json
@@ -395,7 +430,20 @@ Register it as a Codex `UserPromptSubmit` command hook. Project-level
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/codex-handoff.py\" --refresh"
+            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/codex-handoff.py\" --refresh",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "compact|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/scripts/codex-handoff.py\"",
+            "timeout": 30
           }
         ]
       }
@@ -414,7 +462,20 @@ If installed as a user-level Codex skill, use the skill path instead:
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CODEX_HOME:-$HOME/.codex}/skills/output-compress/scripts/codex-handoff.py\" --refresh"
+            "command": "python3 \"${CODEX_HOME:-$HOME/.codex}/skills/output-compress/scripts/codex-handoff.py\" --refresh",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "compact|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CODEX_HOME:-$HOME/.codex}/skills/output-compress/scripts/codex-handoff.py\"",
+            "timeout": 30
           }
         ]
       }
@@ -423,7 +484,10 @@ If installed as a user-level Codex skill, use the skill path instead:
 }
 ```
 
-The helper intentionally does not call git, write Codex memory, or create automation.
-The host may consume the three explicit automation inputs after validating the packet.
+After adding or changing hooks, open `/hooks`, inspect the exact command definitions,
+and trust them; project-local hooks also require a trusted project. The helper uses
+read-only git commands for repository identity and drift guards. It does not modify git,
+write Codex memory, or create automation. The host may consume the explicit heartbeat
+inputs only after the packet is ready.
 The default packet directory can create untracked repo metadata; configure
 `OC_CODEX_HANDOFF_DIR` or keep packet persistence disabled.

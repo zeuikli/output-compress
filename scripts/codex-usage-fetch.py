@@ -135,8 +135,9 @@ def _normalize_limit_snapshot(snapshot, now):
 def normalize(payload, now):
     """Pure transform: Codex usage payload -> neutral pacer JSON record.
 
-    used_pct  = primary 5h window used percentage
+    used_pct  = active primary window used percentage
     resets_at = primary reset time normalized to full ISO UTC
+    window_h  = primary limit_window_seconds converted to hours when available
     extras    = seven_day_pct/seven_day_resets_at/plan_type/source/fetched_at
     """
     rate = payload.get("rate_limit") if isinstance(payload, dict) else None
@@ -158,6 +159,12 @@ def normalize(payload, now):
         "fetched_at": now.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "source": "codex",
     }
+    try:
+        window_seconds = int(primary["limit_window_seconds"])
+        if window_seconds > 0:
+            record["window_h"] = window_seconds / 3600.0
+    except (KeyError, TypeError, ValueError):
+        pass
     if seven_pct is not None:
         record["seven_day_pct"] = seven_pct
     if seven_reset:
@@ -332,6 +339,7 @@ def self_test():
     }
     rec = normalize(payload, now)
     assert rec and rec["used_pct"] == 63.0, rec
+    assert rec["window_h"] == 5.0, rec
     assert rec["resets_at"] == "2026-01-01T16:00:00Z", rec
     assert rec["seven_day_pct"] == 12.5, rec
     assert rec["seven_day_resets_at"] == "2026-01-04T09:15:00Z", rec

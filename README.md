@@ -53,9 +53,13 @@ pacer real usage numbers from the provider's usage endpoint instead of a
 bring-your-own JSON feed. Codex users who want packet-backed, memory-assisted handoff
 wiring can opt in with `OC_CODEX_HANDOFF_PACKET=1` and wire
 `scripts/codex-handoff.py --refresh` as a `UserPromptSubmit` hook. It writes an
-authoritative JSON packet plus a derived Markdown view when the verdict is fresh, then
-gives the Codex host only `resume_at`, a name, and a prompt containing the packet
-`handoff_id` and path. It does not write Codex memory or create automation. The default
+authoritative pending JSON packet plus a derived Markdown view when the verdict is
+fresh in a Git working tree. `--write-packet` validates nonblank checkpoint fields and a
+complete repo guard before PREP becomes ready; the host then receives `resume_at`, a stable
+heartbeat name, and an exact-ID/path prompt. After a host receipt, `--resume-context`
+rejects repository drift. The helper does not write Codex
+memory or create automation. Register both `UserPromptSubmit` and
+`SessionStart(compact|resume)`, then review/trust them with `/hooks`. The default
 `.codex/handoffs` directory may produce untracked repo metadata; configure
 `OC_CODEX_HANDOFF_DIR` if that is not desired.
 

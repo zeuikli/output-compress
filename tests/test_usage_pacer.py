@@ -39,3 +39,19 @@ def test_valid_verdict_has_freshness_metadata(tmp_path):
     assert payload["data_status"] == "OK"
     assert payload["window_id"] == reset
     assert payload["generated_at"].endswith("Z")
+
+
+def test_dynamic_primary_window_is_accepted(tmp_path):
+    usage = tmp_path / "usage.json"
+    verdict = tmp_path / "verdict.json"
+    reset = (datetime.now(timezone.utc) + timedelta(hours=166)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    usage.write_text(json.dumps({"used_pct": 33, "resets_at": reset, "window_h": 168}),
+                     encoding="utf-8")
+    env = {**os.environ, "OC_USAGE_FILE": str(usage), "OC_PACER_VERDICT": str(verdict)}
+    result = subprocess.run([sys.executable, str(SCRIPT), "--json"], capture_output=True,
+                            text=True, env=env, cwd=ROOT)
+    payload = json.loads(result.stdout)
+    assert result.returncode == 0
+    assert payload["data_status"] == "OK"
+    assert payload["window_h"] == 168.0
+    assert payload["verdict"] != "NO_DATA"
