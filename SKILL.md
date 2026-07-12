@@ -191,7 +191,10 @@ you can couple it to compression levels:
 
 A portable reference pacer ships as `scripts/usage-pacer.py` (bring your own usage
 JSON — schema in its docstring; includes a once-per-window user-notification arm and a
-self-test). Hook wiring with the injection-diet rules is in `USAGE.md` §7. Keep the two
+self-test). A Claude-specific official-usage fetcher (`scripts/claude-usage-fetch.py`)
+ships alongside it — it refreshes that JSON from the official subscription endpoint so
+Claude users skip building their own feed, while the pacer itself stays provider-neutral.
+Hook wiring with the injection-diet rules is in `USAGE.md` §7. Keep the two
 responsibilities separate: the pacer *decides when*, this skill *decides how much*, and
 the fidelity gate stays the final arbiter either way.
 

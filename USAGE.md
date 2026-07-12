@@ -175,8 +175,34 @@ manually condense the conversation.
 If you also want the "Pace-aware level adjustment" from `SKILL.md`, extend the same
 hook with the bundled portable pacer. You supply the usage data (a tiny JSON your
 cron/CLI refreshes — schema in the pacer's docstring); the pacer supplies deterministic
-verdicts and once-per-window notification arming. Three injection-diet rules keep the
-hook itself cheap (the same discipline the skill preaches, applied to the hook):
+verdicts and once-per-window notification arming.
+
+**Claude subscribers — skip building your own feed.** The bundled companion
+`scripts/claude-usage-fetch.py` refreshes the usage JSON from the official Claude
+subscription endpoint. Wire it two lines before the pacer (best-effort — it always
+exits 0, network or not) and the neutral pacer gets real numbers:
+
+```bash
+python3 "$(dirname "$0")/../skills/output-compress/scripts/claude-usage-fetch.py" >/dev/null 2>&1  # best-effort refresh
+# ... then the pacer block below reads the freshened OC_USAGE_FILE
+```
+
+It finds your token via this chain (first hit wins), so most setups need zero config:
+
+1. `OC_CLAUDE_TOKEN_FILE` — explicit token-file path override
+2. `CLAUDE_SESSION_INGRESS_TOKEN_FILE` — Claude Code remote/cloud sessions
+3. `CLAUDE_CODE_OAUTH_TOKEN` — token value directly (headless setups)
+4. `~/.claude/.credentials.json` → `claudeAiOauth.accessToken` (local Linux/WSL)
+5. macOS Keychain (`security find-generic-password -s "Claude Code-credentials" -w`)
+
+No token found → it exits silently and the pacer just sees no data. Env overrides:
+`OC_CLAUDE_TOKEN_FILE` (token path), `OC_FETCH_TTL_S` (cache seconds, default 60),
+`OC_USAGE_FILE` (shared with the pacer). Bring-your-own JSON stays the provider-agnostic
+alternative for non-Claude quotas — just write the `{used_pct, resets_at}` file yourself
+and skip the fetcher.
+
+Three injection-diet rules keep the hook itself cheap (the same discipline the skill
+preaches, applied to the hook):
 
 1. **Recompute at most every 10 minutes** (verdict file mtime check) — not every prompt.
 2. **Inject the pace line only when the verdict changes** — ON_PACE is silent by design,
@@ -187,9 +213,13 @@ hook itself cheap (the same discipline the skill preaches, applied to the hook):
 ```bash
 # append inside compress-advisory.sh, after the advisory block above
 PACER="$(dirname "$0")/../skills/output-compress/scripts/usage-pacer.py"  # adjust path
+FETCH="$(dirname "$0")/../skills/output-compress/scripts/claude-usage-fetch.py"  # optional, Claude only
 VERDICT="${OC_PACER_VERDICT:-/tmp/oc-pacer-verdict.json}"
 if [ -f "$PACER" ]; then
   AGE=$(( $(date +%s) - $(stat -c%Y "$VERDICT" 2>/dev/null || echo 0) ))
+  # Claude subscribers: refresh OC_USAGE_FILE from the official endpoint (best-effort,
+  # its own TTL cache means the real network call is at most once per OC_FETCH_TTL_S).
+  [ "$AGE" -gt 600 ] && [ -f "$FETCH" ] && python3 "$FETCH" >/dev/null 2>&1
   [ "$AGE" -gt 600 ] && python3 "$PACER" >/dev/null 2>&1
   LINE=$(python3 - "$VERDICT" "$STATE_FILE" <<'PY'
 import json, pathlib, sys
