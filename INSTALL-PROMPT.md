@@ -25,7 +25,7 @@ contains: `SKILL.md`, `AGENTS.md`, `USAGE.md`, `README.md`,
 `scripts/fidelity-check.py`, `scripts/usage-pacer.py`,
 `scripts/claude-usage-fetch.py` (optional Claude usage feeder),
 `scripts/codex-usage-fetch.py` (optional Codex usage feeder), and
-`scripts/codex-handoff.py` (optional Codex auto-handoff hook helper). List what you
+`scripts/codex-handoff.py` (optional Codex packet-backed, memory-assisted helper). List what you
 found. If files are missing, stop and tell me which.
 
 ## Step 0.5 — Read what you are about to install (do not skip)
@@ -146,23 +146,20 @@ Ask me these two yes/no questions, then act:
    the skill works fully without it.
 
    Once pace coupling is wired, **handoff-aware pacing** comes with it: when the quota
-   window is nearly exhausted (`used_pct >= 90%` and `< 0.5h` left), the pacer emits a
-   `HANDOFF_PREP` / `HANDOFF_HALT` message telling me to persist a handoff to memory +
-   commit/push and (PREP only) schedule a self-wake at `resume_at`. The memory write and
-   self-wake are **delegated to my platform** (on Claude Code: Auto Memory / a handoff
-   skill / `git push`, and `/schedule` for the wake; on Codex: a host workflow can use
-   a scheduled task / heartbeat to return to the same task) — the pacer only decides
-   *when*. Ask me whether to wire the self-wake mechanically (a hook reading the
-   `handoff` / `resume_at` fields) or leave it for me to act on from the injected text
-   (default = leave it). Tunables: `OC_HANDOFF_PCT` (90), `OC_HANDOFF_LEFT_H` (0.5),
-   `OC_HANDOFF_MAX` (2, the consecutive-window circuit breaker),
-   `OC_HANDOFF_RESUME_DELAY_MIN` (3).
+   window is nearly exhausted (`used_pct >= 90%` and `< 0.5h` left), the pacer emits
+   `HANDOFF_PREP` / `HANDOFF_HALT`. For Codex, packet persistence is explicitly opt-in
+   with `OC_CODEX_HANDOFF_PACKET=1` (default off), defaults to `.codex/handoffs`, and
+   may create untracked repo metadata. The JSON packet is authoritative; memory is
+   advisory only and is not synchronized. The helper never writes `~/.codex/memories`
+   or creates automation. It gives the host only `resume_at`, a name, and a prompt
+   containing `handoff_id` and packet path. `HANDOFF_HALT` never creates a wake.
+   Tunables: `OC_HANDOFF_PCT` (90), `OC_HANDOFF_LEFT_H` (0.5),
+   `OC_HANDOFF_MAX` (2), `OC_HANDOFF_RESUME_DELAY_MIN` (3), and
+   `OC_CODEX_HANDOFF_MAX_AGE_S` (600).
 
-   For Codex full auto-handoff, wire `scripts/codex-handoff.py --refresh` as the
-   `UserPromptSubmit` hook. It best-effort runs the Codex usage feeder and pacer,
-   deduplicates the handoff window, and injects a Codex-specific directive that tells
-   the agent to persist a checkpoint and create a thread scheduled task / heartbeat at
-   `resume_at` using the Codex automation tool when available.
+   For Codex packet wiring, set `OC_CODEX_HANDOFF_PACKET=1` and register
+   `scripts/codex-handoff.py --refresh` as the `UserPromptSubmit` hook. `--refresh`
+   accepts only a newly generated verdict; without it stale verdicts are rejected.
 
 ## Step 4.5 — Optional: advisory contract-field lint hook (recipe only — ask before installing)
 

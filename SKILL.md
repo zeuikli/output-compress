@@ -2,7 +2,7 @@
 name: output-compress
 description: 'Tiered output compression (caveman-derived): an explicitly opt-in, token-saving rewrite mode with a never-compress whitelist, model-tier compression caps, and a deterministic fidelity gate (no LLM self-judgment). Use when the user types output-compress, /compress, "compress lite|full|ultra", or asks to shorten/condense internal or scratch output. Do NOT use for: the final user-facing response language, safety/irreversible-action confirmations, contract fields (Goal/Non-goals/Done-when/Return), audit or review findings that must stay verbatim, or as a default/always-on behavior.'
 metadata:
-  version: 1.3.0
+  version: 1.4.0
 ---
 
 # Output-Compress — tiered, whitelist-safe, mechanically verified compression
@@ -207,41 +207,36 @@ and still be at 83% used). Dedup on state change belongs to the injecting hook, 
 pacer — see `compress`/`compress_msg` in its output schema.
 
 **Handoff-aware pacing (nearly-exhausted window)**: when `used_pct >= 90%` **and**
-`< 0.5h` remains in the window, the pacer overrides the burn-rate verdict with a handoff
-state — at that point the priority shifts from pacing to *not losing work*:
+`< 0.5h` remains, the pacer emits `HANDOFF_PREP` or the circuit-breaker
+`HANDOFF_HALT`. These verdicts decide when to preserve work; hook execution and host
+scheduling are not deterministic.
 
-- **HANDOFF_PREP**: persist a handoff to memory (task goal / Done-when / what's been
-  tried / next action) and commit + push, then schedule a self-wake shortly after the
-  window resets to resume — or, where no scheduler exists, notify the user to resume then.
-- **HANDOFF_HALT**: after `OC_HANDOFF_MAX` (default 2) consecutive windows hit the
-  threshold, only wrap up and persist — do **not** self-wake again. This is a circuit
-  breaker: repeatedly burning through whole windows unattended is a runaway / goal-drift
-  signal, so control returns to the user.
+Codex's v1.4.0 helper is packet-backed and memory-assisted. Packet writing is opt-in
+(`OC_CODEX_HANDOFF_PACKET=1`, default off) and defaults to `${cwd}/.codex/handoffs`,
+configurable with `OC_CODEX_HANDOFF_DIR`; this can create untracked repo metadata. The
+JSON packet is authoritative and the derived Markdown is never read for control flow.
+Only an allowlisted pacer summary is stored; access tokens, authorization headers,
+cookies, session IDs, turn IDs, unknown verdict keys, prompt text, and transcript paths
+are excluded. The helper validates verdict mtime (default max age 600 seconds), or
+accepts a newly generated verdict from `--refresh`; stale `HANDOFF_PREP` is ignored.
+Codex memory is advisory only and is not claimed to be synchronized.
 
-The handoff **execution is delegated** — the pacer decides *when* to hand off (and emits
-a machine-readable `handoff` / `resume_at` pair), while the memory write and self-wake
-are the host's own mechanisms (on Claude Code: Auto Memory / a handoff skill / `git
-push`, plus `/schedule` for the wake). Codex installs can wire
-`scripts/codex-handoff.py --refresh` as a `UserPromptSubmit` hook: it refreshes usage,
-runs the pacer, deduplicates handoff windows, and injects a Codex-specific directive to
-persist the checkpoint and create a thread scheduled task / heartbeat. See `USAGE.md`
-§7 "Handoff-aware pacing" for wiring and the `OC_HANDOFF_*` tunables.
+For `HANDOFF_PREP`, the helper gives the Codex host `resume_at`, a name, and a prompt
+containing `handoff_id` and packet path. The helper does not create automation. For
+`HANDOFF_HALT`, the packet is halted and no wake is provided. `SessionStart` with
+`source=compact|resume` is the resume injection point; `PostCompact` emits no
+`additionalContext` because that event does not support it. See `USAGE.md` §7.
 
 ## Changelog
 
-- **1.3.0** (2026-07-13): added `scripts/codex-handoff.py`, a Codex
-  `UserPromptSubmit` hook helper that refreshes Codex usage, runs the pacer, dedupes
-  `HANDOFF_PREP` / `HANDOFF_HALT`, and injects a Codex-specific auto-handoff directive
-  with a one-shot RRULE for thread scheduled task / heartbeat self-wake.
-- **1.2.1** (2026-07-13): clarified Codex wiring docs: Codex can use hooks for
-  per-turn pacer injection and scheduled task / heartbeat automation for self-wake;
-  `AGENTS.md` remains the portable fallback, not the only Codex path.
-- **1.2.0** (2026-07-13): pace coupling gained **handoff-aware states** in
-  `scripts/usage-pacer.py` — `HANDOFF_PREP` / `HANDOFF_HALT` fire when the quota window
-  is nearly exhausted (`used_pct >= 90%` and `< 0.5h` left), emitting a `handoff` /
-  `resume_at` signal that delegates the memory write + self-wake to the host, with a
-  consecutive-window circuit breaker (`OC_HANDOFF_*` tunables). See the new
-  "Handoff-aware pacing" note here and in `USAGE.md` §7.
+- **1.4.0** (2026-07-13): replaced the Codex helper's prior handoff wording with an opt-in
+  packet-backed, memory-assisted control plane: atomic allowlisted JSON packets,
+  freshness/NO_DATA gates, safe resume filtering, dynamic hook event names,
+  idempotent completion, and host-owned automation inputs. Markdown is derived only.
+
+- **1.3.0–1.2.0** (2026-07-13): prior handoff-aware pacing releases. Their advisory
+  verdict fields remain provider-neutral; Codex control semantics are defined by the
+  v1.4.0 packet-backed helper above.
 - **1.1.0** (2026-07-12): added `scripts/fidelity-check.py --coverage --original
   <file>` pre-check mode (§2); added the Coverage 前置判斷 note, the contract-fields
   whole-block hard rule (§3 item 6), the rewrite≠delete quantifier case (§4), and the

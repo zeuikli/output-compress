@@ -13,16 +13,12 @@ Handoff states (fire before AHEAD/BEHIND when the window is nearly exhausted —
 quota is about to run out with almost no window time left, so the priority shifts from
 pacing to *not losing work*):
 
-  HANDOFF_PREP (used >= 90% AND < 0.5h left in window): persist a handoff to your
-      agent's memory now (task goal, Done-when, what's tried, next action) and commit/
-      push, then — if your platform supports it — schedule a self-wake shortly after
-      the window resets to resume; otherwise notify the user to resume then. The memory
-      write and the scheduling are DELEGATED to your environment's own auto-memory /
-      handoff skill / scheduler — this signal only decides WHEN to hand off.
+  HANDOFF_PREP (used >= 90% AND < 0.5h left in window): preserve a task checkpoint
+      through the host's approved packet or memory mechanism. The host decides whether
+      any repository or automation action is authorized; this signal only decides WHEN.
   HANDOFF_HALT (the handoff threshold is hit in >MAX consecutive windows): only wrap
-      up and persist the handoff — do NOT schedule another self-wake. Repeatedly
-      burning consecutive windows is a runaway / goal-drift signal, so this circuit
-      breaker stops the auto-wake loop and waits for the user.
+      up and persist the halted state. Repeatedly burning consecutive windows is a
+      runaway / goal-drift signal, so this circuit breaker waits for the user.
 
 Each verdict also carries a machine-readable `fanout` field (AHEAD ->
 "prefer-lower-tier", BEHIND -> "burst", ON_PACE/handoff/other -> "normal") so external
@@ -76,6 +72,7 @@ import json
 import os
 import pathlib
 import sys
+import tempfile
 
 USAGE_FILE = pathlib.Path(os.environ.get("OC_USAGE_FILE", "/tmp/oc-usage.json"))
 VERDICT_FILE = pathlib.Path(os.environ.get("OC_PACER_VERDICT", "/tmp/oc-pacer-verdict.json"))
@@ -97,6 +94,24 @@ HANDOFF_COUNT_FILE = pathlib.Path(str(VERDICT_FILE) + ".handoff-count")
 
 FANOUT = {"AHEAD": "prefer-lower-tier", "BEHIND": "burst"}  # ON_PACE/handoff/other -> "normal"
 
+
+def _atomic_write_json(path, value):
+    """Write a verdict without exposing a partially written JSON document."""
+    path = pathlib.Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(value, handle, ensure_ascii=False, separators=(",", ":"))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, path)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+
 MSG = {
     "AHEAD": ("PACE AHEAD ({d:+.0f}pp): burning quota faster than the window elapses - "
               "bump output-compress one level within the reader-tier cap (never for "
@@ -109,19 +124,14 @@ MSG = {
                "workspace may run (e.g. a fan-out concurrency cap or spend limiter)."),
     "HANDOFF_PREP": (
         "PACE HANDOFF-PREP (used {u:.0f}%, {left_m:.0f} min left in window, consecutive "
-        "#{n}): quota is nearly exhausted with almost no window time left. Persist a "
-        "handoff NOW — write the task goal, Done-when, what's been tried, and the next "
-        "action into your agent's memory (delegate to your auto-memory / handoff skill) "
-        "and commit + push work in progress. Then hand off: if your platform can schedule "
-        "a self-wake, schedule one shortly after the window resets ({resume}) to resume; "
-        "otherwise notify the user to resume then. This signal decides WHEN — the memory "
-        "write and the scheduling are done by your environment's own mechanisms."),
+        "#{n}): quota is nearly exhausted. Preserve a bounded checkpoint through the "
+        "host's approved packet or memory mechanism. This signal is advisory and does "
+        "not authorize repository changes or automation."),
     "HANDOFF_HALT": (
         "PACE HANDOFF-HALT (the handoff threshold was hit in {n} consecutive windows, "
-        "over the circuit-breaker limit of {max}): only wrap up and persist the handoff "
-        "— do NOT schedule another self-wake. Repeatedly burning through consecutive "
-        "windows is a runaway / goal-drift signal; wait for the user to confirm before "
-        "continuing."),
+        "over the circuit-breaker limit of {max}): only wrap up and persist the halted "
+        "checkpoint. Repeatedly burning through consecutive windows is a runaway / "
+        "goal-drift signal; wait for the user to confirm before continuing."),
 }
 
 
@@ -270,7 +280,7 @@ def self_test() -> int:
     hp = compute(95, "2026-01-01T12:18:00Z", now)         # 18 min left, used 95
     assert hp["verdict"] == "HANDOFF_PREP" and hp["handoff"] == "prep", hp
     assert hp["resume_at"] == "2026-01-01T12:21:00Z", hp  # reset + 3 min
-    assert "12:21:00Z" in hp["message"], hp
+    assert "12:21:00Z" not in hp["message"], hp
     assert hp["fanout"] == "normal", hp                   # handoff -> normal fan-out
     hp2 = compute(95, "2026-01-01T17:18:00Z", now + datetime.timedelta(hours=5))
     assert hp2["verdict"] == "HANDOFF_PREP", hp2          # 2nd consecutive window -> still PREP
@@ -314,12 +324,23 @@ def main() -> int:
         reset = str(cache["resets_at"])
         used, reset = _validate(used, reset)
     except Exception as e:
+        no_data = {"verdict": "NO_DATA", "data_status": "NO_DATA",
+                   "generated_at": datetime.datetime.now(datetime.timezone.utc
+                   ).strftime("%Y-%m-%dT%H:%M:%SZ"), "window_id": "",
+                   "fanout": "normal"}
+        try:
+            _atomic_write_json(VERDICT_FILE, no_data)
+        except Exception:
+            pass
         if a.json:
-            print(json.dumps({"verdict": "NO_DATA", "fanout": "normal", "reason": str(e)}))
+            print(json.dumps(no_data))
         return 0  # fail-open: advisory must never block work
     result = compute(used, reset)
+    result.update({"generated_at": datetime.datetime.now(datetime.timezone.utc
+                  ).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                   "window_id": reset, "data_status": "OK"})
     try:
-        VERDICT_FILE.write_text(json.dumps(result))
+        _atomic_write_json(VERDICT_FILE, result)
     except Exception:
         pass
     if a.json:

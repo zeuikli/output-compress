@@ -322,71 +322,67 @@ When the window is nearly exhausted — `used_pct >= 90%` **and** `< 0.5h` left 
 pacer overrides the burn-rate verdict with a **handoff** state, because at that point
 the priority is *not losing work* rather than pacing it:
 
-| `verdict` | `handoff` | `resume_at` | what the injected `message` tells the model to do |
+| `verdict` | `handoff` | `resume_at` | packet-backed helper result |
 |---|---|---|---|
-| `HANDOFF_PREP` | `"prep"` | ISO UTC (reset + 3 min) | persist a handoff to memory (task / Done-when / tried / next-action) + commit & push, then schedule a self-wake at `resume_at` — or notify the user to resume then |
-| `HANDOFF_HALT` | `"halt"` | `""` | wrap up + persist the handoff only; do **not** schedule another self-wake (circuit breaker tripped) |
+| `HANDOFF_PREP` | `"prep"` | ISO UTC (reset + 3 min) | with packet opt-in, persist an allowlisted JSON packet and give the host `resume_at`, name, and packet prompt |
+| `HANDOFF_HALT` | `"halt"` | `""` | with packet opt-in, persist a halted packet only; do **not** provide a wake |
 
-The **memory write and the self-wake scheduling are delegated to your environment** —
-the pacer only decides *when* to hand off and *when* the wake should fire. On Claude
-Code that means the model runs its normal cross-session persistence (Auto Memory, a
-handoff skill, `git commit && push`) and schedules the wake with `/schedule` or a
-`send_later`-style tool; where none of those exist, the `message` degrades to "notify
-the user to resume after `resume_at`". The existing hook already injects `message` on
-any verdict change, so `HANDOFF_PREP` / `HANDOFF_HALT` flow through with **no extra
-wiring** — read the machine-readable `handoff` / `resume_at` fields only if you want to
-wire the self-wake mechanically rather than letting the model act on the text.
+The pacer verdict is advisory and its human-readable `message` is not a control input
+for the Codex helper. Hook success does not prove packet persistence or scheduling.
+Codex's packet-backed, memory-assisted helper is opt-in (`OC_CODEX_HANDOFF_PACKET=1`)
+and defaults to `${cwd}/.codex/handoffs` (`OC_CODEX_HANDOFF_DIR` overrides it). The JSON
+packet is authoritative; Markdown is a derived view with a digest and is never read by
+the helper. Packet files may be untracked repo metadata. The helper never writes
+`~/.codex/memories` and does not claim memory synchronization.
+
+The packet stores only an explicit allowlist: schema/status/ID/timestamps, `prep|halt`,
+cwd, safe pacer scalar fields, source verdict hash/mtime, a fixed checkpoint template,
+and a fixed resume prompt. It excludes access tokens, authorization headers, cookies,
+session IDs, turn IDs, unknown verdict keys, hook prompt fields, and free-form messages.
+The handoff ID uses repo/session hashes, window ID, handoff, and canonical safe verdict
+inputs; it does not use `used_pct`.
 
 **Circuit breaker.** The pacer counts consecutive windows that hit the handoff
 threshold (keyed by `resets_at`). After `OC_HANDOFF_MAX` (default 2) consecutive windows
-it emits `HANDOFF_HALT` instead of `HANDOFF_PREP` and stops arming the self-wake:
+it emits `HANDOFF_HALT` instead of `HANDOFF_PREP` and carries no `resume_at`:
 repeatedly burning through whole windows unattended is a runaway / goal-drift signal, so
 it hands control back to you. Thresholds are tunable via `OC_HANDOFF_PCT` (90),
 `OC_HANDOFF_LEFT_H` (0.5), `OC_HANDOFF_MAX` (2), `OC_HANDOFF_RESUME_DELAY_MIN` (3); set
 `OC_HANDOFF_PCT=0` to disable handoff states entirely.
 
-What stays environment-specific (deliberately not shipped): *how* the notify line
-reaches the user (push tool, `osascript`, `notify-send`, a chat webhook), and the
-**execution** of a handoff — the actual memory write and self-wake scheduling behind
-`HANDOFF_PREP` / `HANDOFF_HALT`. The pacer decides *when* to notify, compress, and hand
-off; delivering the notification and performing the handoff/self-wake are your
-platform's job. The pacer's contract ends at "emit each signal exactly once,
-deterministically."
+What stays environment-specific (deliberately not shipped): *how* a host automation
+tool consumes `resume_at`, name, and prompt. The helper only emits those inputs; it
+does not create Python automation, call a scheduler, or guarantee that a hook runs.
+`HANDOFF_HALT` never creates or requests a wake.
 
-**Codex / AGENTS.md agents:** Codex can use lifecycle hooks for automatic pacer
-injection, including a `UserPromptSubmit` command hook for per-turn advisory text and
-`PostCompact` / `SessionStart` hooks for compaction/session resets. For the portable
-fallback, keep the `AGENTS.md` section permanently in your project's `AGENTS.md`: it is
-loaded into context every session, so it behaves as always-present advisory without
-extra hook wiring. Gate actual compression with a phrase like "when I say compress" if
-you still want opt-in behavior.
+**Codex / AGENTS.md agents:** Codex can use lifecycle hooks for advisory pacer
+injection. `SessionStart` with `source=compact|resume` is the supported resume injection
+point; `PostCompact` has no `additionalContext` contract and the helper emits no such
+field. Keep the `AGENTS.md` section permanently in a project's `AGENTS.md` for a
+portable advisory fallback. Gate actual compression with an explicit phrase if desired.
 
-For `HANDOFF_PREP`, Codex can wire `resume_at` to a scheduled task / heartbeat that
-returns to the same task after the quota window resets. The pacer still does not create
-that automation by itself: the hook or host workflow must read `handoff` / `resume_at`,
-persist the handoff summary, and ask Codex to schedule the follow-up. If that host
-automation is not available, degrade to notifying the user to resume at `resume_at`.
+##### Codex packet-backed, memory-assisted helper
 
-##### Codex full auto-handoff hook
-
-For Codex, the bundled hook helper does the mechanical part:
+The bundled helper is opt-in and fail-open:
 
 ```bash
 python3 scripts/codex-handoff.py --refresh
 ```
 
-`--refresh` best-effort runs `scripts/codex-usage-fetch.py` and `scripts/usage-pacer.py`
-first, then reads `OC_PACER_VERDICT`. When the pacer emits `HANDOFF_PREP`, the helper
-deduplicates the handoff window and outputs Codex hook JSON that adds developer context
-with:
+`--refresh` runs the optional feeder and pacer, then accepts the verdict only when the
+pacer successfully produced a changed verdict file. Without `--refresh`, the default
+verdict max age is 600 seconds (`OC_CODEX_HANDOFF_MAX_AGE_S`). `NO_DATA`, stale,
+malformed, completed, halted, corrupt, or oversized packets are ignored by resume.
+With `OC_CODEX_HANDOFF_PACKET=1`, `HANDOFF_PREP` creates an atomic JSON packet and
+derived Markdown, then outputs only `resume_at`, a name, and a prompt containing the
+`handoff_id` and packet path for the Codex host automation tool. It does not create
+automation. `HANDOFF_HALT` persists status `halted` and provides no wake. On any
+persistence failure the hook exits 0 and emits common `systemMessage`:
+`HANDOFF_NOT_PERSISTED`; no schedule instruction is emitted.
 
-- the exact `resume_at`
-- a one-shot `RRULE` (`DTSTART:<resume_at>` plus `RRULE:FREQ=MINUTELY;COUNT=1`)
-- a durable scheduled-task prompt for resuming the same task
-- required steps to persist the handoff checkpoint and preserve work
-
-When the pacer emits `HANDOFF_HALT`, the helper injects a checkpoint-only directive and
-explicitly forbids creating another self-wake.
+Useful maintenance commands are `--dry-run`, `--self-test`, and
+`--mark-complete HANDOFF_ID`. The last accepts only the 64-hex handoff ID and is
+atomic/idempotent for an active packet.
 
 Register it as a Codex `UserPromptSubmit` command hook. Project-level
 `.codex/hooks.json` example:
@@ -427,7 +423,7 @@ If installed as a user-level Codex skill, use the skill path instead:
 }
 ```
 
-The helper intentionally does not call git or write Codex automation state files
-itself. Codex hooks can inject context, while scheduled task / heartbeat creation is a
-Codex host/tool action. The injected directive tells Codex to use the automation tool
-when available; if it is not available, the fallback is an explicit user notification.
+The helper intentionally does not call git, write Codex memory, or create automation.
+The host may consume the three explicit automation inputs after validating the packet.
+The default packet directory can create untracked repo metadata; configure
+`OC_CODEX_HANDOFF_DIR` or keep packet persistence disabled.
