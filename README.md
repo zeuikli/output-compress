@@ -47,8 +47,9 @@ the gate command in the docs resolves to a real path. With a Codex skill install
 the installed skill path, e.g.
 `$CODEX_HOME/skills/output-compress/scripts/fidelity-check.py`. `scripts/usage-pacer.py`
 is optional — only needed for the pace-coupling described in `SKILL.md` / `USAGE.md`
-§7. Claude subscribers can also copy the optional `scripts/claude-usage-fetch.py`, which
-feeds the pacer real usage numbers from the official endpoint instead of a
+§7. Claude and Codex users can also copy the optional provider feeders
+(`scripts/claude-usage-fetch.py` or `scripts/codex-usage-fetch.py`), which feed the
+pacer real usage numbers from the provider's usage endpoint instead of a
 bring-your-own JSON feed.
 
 ## Quickstart: fidelity gate demo
