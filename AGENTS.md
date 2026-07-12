@@ -91,23 +91,23 @@ to discard. `--log` appends JSONL to `--log-file` (default `./compress-log.jsonl
 
 ### Always-on (optional)
 
-Codex has no per-turn hook mechanism like Claude Code's UserPromptSubmit — the
-straightforward way to make this advisory always-present is to keep this section
+The portable way to make this advisory always-present is to keep this section
 permanently in your project's `AGENTS.md`, since that file is loaded into context every
-session. That makes the rules always-visible, but actual invocation (deciding to
-compress a given piece of output) should still be gated by an explicit phrase like
-"when I say compress," unless you've deliberately decided this should be continuously
-applied rather than opt-in.
+session. Codex also supports lifecycle hooks, so a project can additionally inject a
+short pacer/advisory line from a `UserPromptSubmit` command hook if it wants per-turn
+automation. In either setup, actual invocation (deciding to compress a given piece of
+output) should still be gated by an explicit phrase like "when I say compress," unless
+you've deliberately decided this should be continuously applied rather than opt-in.
 
 ## Pace coupling (optional)
 
 A portable pacing companion ships as `scripts/usage-pacer.py` (bring-your-own usage
 JSON; deterministic AHEAD/ON_PACE/BEHIND verdicts + a once-per-window notification
-arm). Codex has no per-turn hook, so run it from your own scheduler (cron, a wrapper
-script around session start) and paste its one-line verdict into the conversation when
-it changes; the rule it drives is in `SKILL.md` ("Pace-aware level adjustment"): AHEAD
-means bump compression one level within the reader-tier cap, anything else means
-default level. The fidelity gate is unaffected either way.
+arm). In Codex, run it from a lifecycle hook, a wrapper, cron, or another scheduler and
+inject or paste its one-line verdict into the conversation when it changes. The rule it
+drives is in `SKILL.md` ("Pace-aware level adjustment"): AHEAD means bump compression
+one level within the reader-tier cap, anything else means default level. The fidelity
+gate is unaffected either way.
 
 The pacer also emits an absolute-threshold `compress`/`compress_msg` pair — orthogonal
 to the burn-rate verdict, fires even when `ON_PACE` — that bumps one level at 80% used
@@ -117,6 +117,7 @@ It also emits **handoff states** when the window is nearly exhausted (`used_pct 
 and `< 0.5h` left): `HANDOFF_PREP` (with a machine-readable `handoff` / `resume_at` pair)
 tells you to persist a handoff to memory + commit/push and schedule a resume — or notify
 the user — and `HANDOFF_HALT` is a consecutive-window circuit breaker that stops the
-self-wake loop. On Codex, act on the injected `message` yourself: the memory write and
-any self-wake are your platform's job (the pacer only decides *when*). See `USAGE.md` §7
-"Handoff-aware pacing" and the `OC_HANDOFF_*` tunables.
+self-wake loop. On Codex, the pacer can feed a hook or host workflow, but the memory
+write and any scheduled task / heartbeat self-wake are still the platform's job (the
+pacer only decides *when*). See `USAGE.md` §7 "Handoff-aware pacing" and the
+`OC_HANDOFF_*` tunables.

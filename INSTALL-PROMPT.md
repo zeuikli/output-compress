@@ -122,8 +122,9 @@ Ask me these two yes/no questions, then act:
 
 1. **Auto-activation every turn?** If yes and I'm on Claude Code, create the
    UserPromptSubmit hook from `USAGE.md` §7 (full-rules-once-then-short-reminder
-   pattern) and register it in my settings' hooks. If yes on Codex, use the AGENTS.md
-   fallback / always-loaded advisory section above. If no — I invoke it per
+   pattern) and register it in my settings' hooks. If yes on Codex, prefer a Codex
+   `UserPromptSubmit` command hook when I want per-turn injection; otherwise use the
+   AGENTS.md fallback / always-loaded advisory section above. If no — I invoke it per
    conversation; nothing to do.
 2. **Pace coupling / usage notification?** If yes, set up whatever refreshes the
    usage JSON (`OC_USAGE_FILE`, schema in `usage-pacer.py`'s docstring — I must tell
@@ -143,11 +144,13 @@ Ask me these two yes/no questions, then act:
    `HANDOFF_PREP` / `HANDOFF_HALT` message telling me to persist a handoff to memory +
    commit/push and (PREP only) schedule a self-wake at `resume_at`. The memory write and
    self-wake are **delegated to my platform** (on Claude Code: Auto Memory / a handoff
-   skill / `git push`, and `/schedule` for the wake) — the pacer only decides *when*. Ask
-   me whether to wire the self-wake mechanically (a hook reading the `handoff` /
-   `resume_at` fields) or leave it for me to act on from the injected text (default =
-   leave it). Tunables: `OC_HANDOFF_PCT` (90), `OC_HANDOFF_LEFT_H` (0.5), `OC_HANDOFF_MAX`
-   (2, the consecutive-window circuit breaker), `OC_HANDOFF_RESUME_DELAY_MIN` (3).
+   skill / `git push`, and `/schedule` for the wake; on Codex: a host workflow can use
+   a scheduled task / heartbeat to return to the same task) — the pacer only decides
+   *when*. Ask me whether to wire the self-wake mechanically (a hook reading the
+   `handoff` / `resume_at` fields) or leave it for me to act on from the injected text
+   (default = leave it). Tunables: `OC_HANDOFF_PCT` (90), `OC_HANDOFF_LEFT_H` (0.5),
+   `OC_HANDOFF_MAX` (2, the consecutive-window circuit breaker),
+   `OC_HANDOFF_RESUME_DELAY_MIN` (3).
 
 ## Step 4.5 — Optional: advisory contract-field lint hook (recipe only — ask before installing)
 
