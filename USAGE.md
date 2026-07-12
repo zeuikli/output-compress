@@ -217,6 +217,39 @@ No token found → it exits silently and the pacer just sees no data. Env overri
 alternative for non-Claude quotas — just write the `{used_pct, resets_at}` file yourself
 and skip the fetcher.
 
+**Codex / ChatGPT-auth users — same pacer, Codex feed.** The bundled companion
+`scripts/codex-usage-fetch.py` refreshes the same neutral usage JSON from Codex's usage
+endpoint using a Codex session token. Wire it in the same place as the Claude fetcher,
+right before the pacer:
+
+```bash
+python3 "$(dirname "$0")/../skills/output-compress/scripts/codex-usage-fetch.py" >/dev/null 2>&1  # best-effort refresh
+# ... then the pacer block below reads the freshened OC_USAGE_FILE
+```
+
+It finds your token via this chain (first hit wins), so normal local CLI installs
+usually need no config:
+
+1. `OC_CODEX_TOKEN_FILE` — explicit token-file path override
+2. `CODEX_SESSION_TOKEN_FILE` — host/runtime-provided session-token file
+3. `CODEX_ACCESS_TOKEN` — token value directly (enterprise/headless setups)
+4. `CODEX_OAUTH_TOKEN` — token value directly (local automation)
+5. `${CODEX_HOME:-~/.codex}/auth.json` → `tokens.access_token`
+
+Endpoint resolution is configurable: `OC_CODEX_USAGE_URL` wins; otherwise
+`chatgpt_base_url` in `${CODEX_HOME:-~/.codex}/config.toml` selects the matching Codex
+API style; the default is `https://chatgpt.com/backend-api/wham/usage`. No token found or
+fetch failure → it exits silently and the pacer sees no data. Env overrides:
+`OC_CODEX_TOKEN_FILE`, `OC_CODEX_USAGE_URL`, `OC_FETCH_TTL_S`, `OC_USAGE_FILE`, and
+`CODEX_HOME`. Treat `${CODEX_HOME:-~/.codex}/auth.json` like a password; never commit
+it or paste token material into chats/logs.
+
+The pacer only needs the primary five-hour window, but the Codex feeder also preserves
+non-PII usage extras when the endpoint returns them: seven-day usage, `credits`,
+`code_review_rate_limit`, `additional_rate_limits`, and `rate_limit_reset_credits`.
+It deliberately does not write account identifiers such as email, user id, or account id
+into `OC_USAGE_FILE`.
+
 Three injection-diet rules keep the hook itself cheap (the same discipline the skill
 preaches, applied to the hook):
 
@@ -229,11 +262,12 @@ preaches, applied to the hook):
 ```bash
 # append inside compress-advisory.sh, after the advisory block above
 PACER="$(dirname "$0")/../skills/output-compress/scripts/usage-pacer.py"  # adjust path
-FETCH="$(dirname "$0")/../skills/output-compress/scripts/claude-usage-fetch.py"  # optional, Claude only
+FETCH="$(dirname "$0")/../skills/output-compress/scripts/claude-usage-fetch.py"  # optional, Claude
+# FETCH="$(dirname "$0")/../skills/output-compress/scripts/codex-usage-fetch.py"  # optional, Codex
 VERDICT="${OC_PACER_VERDICT:-/tmp/oc-pacer-verdict.json}"
 if [ -f "$PACER" ]; then
   AGE=$(( $(date +%s) - $(stat -c%Y "$VERDICT" 2>/dev/null || echo 0) ))
-  # Claude subscribers: refresh OC_USAGE_FILE from the official endpoint (best-effort,
+  # Optional provider feed: refresh OC_USAGE_FILE from the provider endpoint (best-effort,
   # its own TTL cache means the real network call is at most once per OC_FETCH_TTL_S).
   [ "$AGE" -gt 600 ] && [ -f "$FETCH" ] && python3 "$FETCH" >/dev/null 2>&1
   [ "$AGE" -gt 600 ] && python3 "$PACER" >/dev/null 2>&1

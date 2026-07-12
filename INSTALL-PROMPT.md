@@ -23,8 +23,9 @@ do not skip a verification because something "looks right".
 Find the `output-compress/` directory (ask me for the path if you can't). Confirm it
 contains: `SKILL.md`, `AGENTS.md`, `USAGE.md`, `README.md`,
 `scripts/fidelity-check.py`, `scripts/usage-pacer.py`,
-`scripts/claude-usage-fetch.py` (optional Claude-only usage feeder). List what you
-found. If files are missing, stop and tell me which.
+`scripts/claude-usage-fetch.py` (optional Claude usage feeder),
+`scripts/codex-usage-fetch.py` (optional Codex usage feeder). List what you found. If
+files are missing, stop and tell me which.
 
 ## Step 0.5 — Read what you are about to install (do not skip)
 
@@ -107,6 +108,10 @@ Run from wherever you installed it (`python3` ≥ 3.10):
    ```bash
    python3 <install-path>/scripts/claude-usage-fetch.py --self-test   # expect SELF-TEST PASS
    ```
+   If `scripts/codex-usage-fetch.py` is present, self-test it too (offline, no network):
+   ```bash
+   python3 <install-path>/scripts/codex-usage-fetch.py --self-test   # expect SELF-TEST PASS
+   ```
 
 If any check fails, diagnose before proceeding — do not declare the install done.
 Clean up the `/tmp/oc-*` files afterwards.
@@ -127,8 +132,11 @@ Ask me these two yes/no questions, then act:
    I'm a Claude subscriber**, wire `scripts/claude-usage-fetch.py` instead of building
    my own feed — it refreshes the JSON from the official endpoint and finds my token
    automatically (chain documented in its docstring and `USAGE.md` §7); add its
-   best-effort call two lines before the pacer. If no, skip — the skill works fully
-   without it.
+   best-effort call two lines before the pacer. **If I'm a Codex user with ChatGPT
+   auth/session token available**, wire `scripts/codex-usage-fetch.py` the same way;
+   it reads `CODEX_SESSION_TOKEN_FILE`, `CODEX_ACCESS_TOKEN`, `CODEX_OAUTH_TOKEN`, or
+   `${CODEX_HOME:-~/.codex}/auth.json` without printing token material. If no, skip —
+   the skill works fully without it.
 
 ## Step 4.5 — Optional: advisory contract-field lint hook (recipe only — ask before installing)
 
