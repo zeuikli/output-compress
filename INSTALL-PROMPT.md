@@ -65,11 +65,13 @@ Pick the FIRST matching case:
 
 ## Step 2 — Language calibration (do not skip for non-English users)
 
-Open the installed `scripts/fidelity-check.py`. The `NEGATIONS` list ships
-English-only. Ask me what language(s) my agent writes in, and add those languages'
-negation words. Prefer **multi-character** words — e.g. Traditional Chinese
-`"不能", "不要", "禁止", "沒有", "除非"`; German `"nicht", "kein"`; French `"pas",
-"jamais"`. CJK **single characters** (`不`, `非`, `未`, `勿`) match as substrings inside
+Open the installed `scripts/fidelity-check.py`. The `NEGATIONS` list ships with
+English **and Traditional Chinese** multi-character words already
+(`"不能", "不要", "禁止", "沒有", "除非", "不可", "不得", "並非"`), and
+`QUANTIFIER_BOUNDS` likewise ships English + Traditional Chinese — so a zh-TW agent
+needs no change here. Ask me what language(s) my agent writes in, and add any that
+aren't already covered. Prefer **multi-character** words — e.g. German
+`"nicht", "kein"`; French `"pas", "jamais"`. CJK **single characters** (`不`, `非`, `未`, `勿`) match as substrings inside
 many non-negation words (`不同`, `非常`, `未來`) because CJK has no word boundaries —
 only add them if I accept the higher false-positive (extra gate FAIL) rate; Latin-script
 words are boundary-matched automatically and don't have this problem. Also ask
