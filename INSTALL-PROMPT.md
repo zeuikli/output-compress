@@ -52,10 +52,10 @@ Pick the FIRST matching case:
   use Codex skills): install this whole directory to
   `${CODEX_HOME:-~/.codex}/skills/output-compress`. Prefer the official installer when
   installing from GitHub:
-  `python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py --repo zeuikli/output-compress --path . --name output-compress`.
+  `python3 "${CODEX_HOME:-$HOME/.codex}/skills/.system/skill-installer/scripts/install-skill-from-github.py" --repo zeuikli/output-compress --path . --name output-compress`.
   If installing from a local checkout, copy the directory there only if the destination
   does not already exist. Validate with
-  `python3 ~/.codex/skills/.system/skill-creator/scripts/quick_validate.py ${CODEX_HOME:-~/.codex}/skills/output-compress`.
+  `python3 "${CODEX_HOME:-$HOME/.codex}/skills/.system/skill-creator/scripts/quick_validate.py" "${CODEX_HOME:-$HOME/.codex}/skills/output-compress"`.
 - **Codex AGENTS.md fallback / always-loaded advisory**: append the skill section of
   `AGENTS.md` (everything after its first `---`) into my project's `AGENTS.md`, and
   copy the `scripts/` directory into the project (default expected path: `scripts/` at
@@ -160,8 +160,9 @@ Ask me these two yes/no questions, then act:
    `OC_CODEX_HANDOFF_MAX_AGE_S` (600).
 
    For Codex packet wiring, set `OC_CODEX_HANDOFF_PACKET=1` and register
-   `scripts/codex-handoff.py --refresh` as the `UserPromptSubmit` hook plus the same
-   helper as `SessionStart` with matcher `compact|resume`. `--refresh` accepts only a
+   `python3 "${CODEX_HOME:-$HOME/.codex}/skills/output-compress/scripts/codex-handoff.py" --refresh`
+   as the `UserPromptSubmit` hook plus the same helper as `SessionStart` with matcher
+   `compact|resume`. `--refresh` accepts only a
    newly generated verdict. After writing the hook config, use `/hooks` to review and
    trust the exact definitions; project-local hooks also require a trusted project.
 

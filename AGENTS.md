@@ -52,7 +52,7 @@ saved log's reader is any future session, so use `lite` for anything long-lived)
 5. Safety-critical statements (irreversible-action confirmations, incident/priority-0
    report language) — never compress at all
 6. Contract fields (Goal / Non-goals / Done-when / Return {} or equivalent)
-7. Hedges/qualifiers (only/provisional/unverified/tentative/estimated/caveat/assume/
+7. Hedges/qualifiers (only/may/provisional/unverified/tentative/estimated/caveat/assume/
    subject to, and local-language equivalents) — occurrence count must not decrease;
    stripping the caveat while keeping the evidence ("decontextualization") flips
    meaning the same way a dropped negation does. Word list = `HEDGES` in
@@ -75,7 +75,7 @@ this eliminates the most common first-round gate failure (`negation_counts`).
 ### Fidelity gate — run after every compression, before persisting anything
 
 ```bash
-python3 scripts/fidelity-check.py --original /tmp/orig.txt --compressed /tmp/comp.txt \
+python3 "${CODEX_HOME:-$HOME/.codex}/skills/output-compress/scripts/fidelity-check.py" --original /tmp/orig.txt --compressed /tmp/comp.txt \
   --log --level full --context report
 ```
 
@@ -111,8 +111,9 @@ failure fall back to the original text instead of re-delegating. Tag delegated r
   negation word surviving while its clause's scope silently changed — use `lite` (or
   skip compression) wherever a negation carries real logical weight.
 - The hedge list (whitelist item 7) is deliberately conservative to keep false FAILs
-  low — extend `HEDGES` with your language's qualifier words, preferring multi-word
-  phrases.
+  low; lowercase modal `may` is protected, while month-name `May` is ignored to avoid
+  date false positives. Extend `HEDGES` with your language's qualifier words,
+  preferring multi-word phrases.
 - Savings figures are the upstream project's self-report on one model; verify on your
   own tasks before treating them as a guarantee. Your own logged numbers are also a
   self-selected sample (only runs where compression was attempted *and* logged appear)
