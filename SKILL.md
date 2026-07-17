@@ -2,7 +2,7 @@
 name: output-compress
 description: 'Tiered output compression (caveman-derived): an explicitly opt-in, token-saving rewrite mode with a never-compress whitelist, model-tier compression caps, and a deterministic fidelity gate (no LLM self-judgment). Use when the user types output-compress, /compress, "compress lite|full|ultra", or asks to shorten/condense internal or scratch output. Do NOT use for: the final user-facing response language, safety/irreversible-action confirmations, contract fields (Goal/Non-goals/Done-when/Return), audit or review findings that must stay verbatim, or as a default/always-on behavior.'
 metadata:
-  version: 1.4.1
+  version: 1.5.0
 ---
 
 # Output-Compress — tiered, whitelist-safe, mechanically verified compression
@@ -94,6 +94,14 @@ checking coverage first can save you the compress→gate→retry cycle entirely.
    clause and deleted an inline verification command embedded inside it; the gate
    caught it, but the failure mode was treating a contract field like ordinary prose
    instead of skipping the entire field untouched (2026-07-12).
+7. **Hedges/qualifiers — occurrence count must not decrease** (only / provisional /
+   unverified / tentative / estimated / caveat / assume(s/ing) / subject to, and
+   local-language equivalents; word-list SSoT = `HEDGES` in
+   `scripts/fidelity-check.py`). "The evidence survived but the caveat needed to
+   interpret it was stripped" is a named second fidelity axis —
+   **decontextualization** (arXiv 2606.29251: LLM compression can flip which decision
+   the original text supports) — and is treated at the same severity as a dropped
+   negation (added 2026-07-17).
 
 ## 4. Fidelity gate (mechanical, run after every compression)
 
@@ -126,6 +134,13 @@ count dropped), but the deeper problem is that the rewrite was unnecessary risk 
 first place — a pure deletion pass never has this failure mode. If a sentence needs to
 be reworded (not just trimmed) to get shorter, leave that sentence uncompressed.
 
+**Negation-first ordering (2026-07-17):** as the *first* compression step, enumerate
+every negation/quantifier-bound clause (whitelist item 3) and lock those sentences
+whole, then run the deletion pass over the remaining text. Field logs (2026-07-12)
+showed 3/3 first-round `full`-level dispatch-prompt compressions failing the gate on
+`negation_counts` alone; front-loading the lock eliminates that fixed retry round
+without touching the gate's thresholds.
+
 Rewrite ≠ delete, even for a single word: a field run rewrote `Provide at least:` into
 `Min set:` — shorter, but it silently dropped the quantifier bound `at least`,
 turning a minimum into an unqualified list. The gate correctly intercepted it
@@ -135,15 +150,48 @@ like a trivial word swap.
 
 Add `--log --level <L> --context <C>` to also append a JSONL record to
 `compress-log.jsonl` (path configurable via `--log-file`) — see the script's `--help`
-and §5 below for what the log is for.
+and §5 below for what the log is for. Each record includes `grounded_pct`: the
+fraction of the compressed text's word-level tokens that appear in the original (a
+deterministic groundedness proxy borrowed from arXiv 2503.19114's measurement idea).
+Under the deletion-only rule it should sit at ~100; a drop means rewriting/generation
+crept in — it is the second measurement axis alongside `saving_pct`.
 
 **Gate efficacy (field run, 2026-07-12):** 2/2 true-positive fidelity FAILs caught (a
 dropped quantifier, a deleted inline verification command), 0 false-positives, both
 fixed and re-passed on the first retry — the mechanical (non-LLM-judge) approach held
 up under real dispatch-prompt compression, not just synthetic test cases.
 
+## 4b. Delegating compression to a cheaper model (optional)
+
+Splitting the work: deciding *which sentences are deletable* is a judgment call and can
+be delegated to a cheap/small worker model; the fidelity gate is a deterministic check
+and **must always be run by the orchestrating agent itself, never by the worker**
+(a producer must not verify its own output — a worker's "gate passed" claim is not
+evidence; the orchestrator's own fidelity-check output is).
+
+**Executor-tier policy:** prefer a *cheap* model as the compression executor and avoid
+having a frontier model self-compress long text — not only for cost: arXiv 2602.09789
+(the "scaling paradox") measured that *larger* compressor models are *less* faithful,
+preferring their own semantic priors over the source text. Cheap executor + mechanical
+gate is independently supported by that result.
+
+Delegate only when all three hold, otherwise compress inline: ① the text will be
+persisted (not disposable); ② the original is ≥4KB (below that, handoff overhead
+exceeds expected savings — whitelist-dense text saved only 2.4–6.8% in field runs);
+③ the `--coverage` pre-check does not say `skip`. Flow: orchestrator runs
+`--coverage` to pick the level → spawns the worker with the original's path, the full
+§3 whitelist, the deletion-only + negation-first rules, and the target level → the
+orchestrator itself runs `fidelity-check.py` (+ `--log`, tagging `context` as
+`delegated-<original context>` so delegated and inline runs can be compared) → pass
+persists, fail falls back to the original text (no re-delegation — a re-compress
+round-trip costs more than it saves).
+
 ## 5. Calibration and known limits
 
+- Treat your own logged savings numbers as observations, not commitments: the sample
+  is self-selected (only runs where the model chose to compress *and* chose to log get
+  recorded, and under advisory auto-activation the execution rate can silently be
+  zero), so always quote them with that qualifier.
 - The 65% savings figure in §1 is the upstream project's self-reported number from a
   single model on English text; treat it as a rough prior, not a local guarantee, until
   you've run your own before/after comparison on a handful of representative tasks. The
@@ -166,6 +214,9 @@ up under real dispatch-prompt compression, not just synthetic test cases.
 - Negation fidelity is checked by "count does not decrease," which cannot detect a
   negation word surviving while its clause's scope silently changed — for anything
   where a negation carries real logical weight, use `lite` or skip compression.
+- The hedge list (whitelist item 7) is deliberately conservative to keep the
+  false-FAIL rate low — it will not catch every stripped qualifier. Extend `HEDGES`
+  with your own language's hedge words, preferring multi-word phrases.
 
 ## Auto-activation (optional)
 
@@ -233,6 +284,12 @@ may inject ready state. `PostCompact` emits no
 `additionalContext` because that event does not support it. See `USAGE.md` §7.
 
 ## Changelog
+
+- **1.5.0** (2026-07-17): added the hedge/decontextualization whitelist category (§3
+  item 7, `HEDGES` in the fidelity script), the `grounded_pct` second measurement axis
+  in `--log` records, the negation-first compression ordering (§4), the delegated
+  compression flow with the cheap-executor policy (§4b, scaling-paradox grounding),
+  and the self-selected-sample qualifier on quoting logged savings (§5).
 
 - **1.4.1** (2026-07-13): added validated checkpoint writes, exact-ID resume, repository
   drift guards, heartbeat receipts, strict `--refresh`, crash-stale lock recovery,

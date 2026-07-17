@@ -10,7 +10,8 @@ Exit 0 = nothing lost (or coverage mode ran). Exit 1 = something lost (stdout li
 what). Exit 2 = usage error.
 
 Categories map to SKILL.md "Never-compress whitelist". If you change the whitelist
-in SKILL.md, update PATTERNS / NEGATIONS / CUSTOM_TAG_PATTERNS below to match.
+in SKILL.md, update PATTERNS / NEGATIONS / QUANTIFIER_BOUNDS / HEDGES /
+CUSTOM_TAG_PATTERNS below to match.
 
 --log appends a JSONL record regardless of pass/fail. A failed (exit 1) run is still
 worth logging: when compressed text is about to be persisted and the gate still fails
@@ -60,6 +61,18 @@ NEGATIONS = [
 # 2026-07-12 (card3): quantifier bounds flip meaning silently when dropped
 # ("at most 3" -> "3"): same discipline as negations — count must not decrease.
 QUANTIFIER_BOUNDS = ["at most", "at least", "up to", "no more than", "fewer than", "最多", "至少", "不超過", "上限", "下限"]
+# 2026-07-17 (arXiv 2606.29251 "decontextualization"): evidence can survive
+# compression while the caveat/qualifier needed to interpret it is stripped —
+# a named second fidelity axis. Hedge/qualifier occurrence count must not
+# decrease, same discipline as negations. The word list is deliberately
+# conservative (multi-word phrases preferred, to lower false-FAIL rate;
+# "may" is excluded because it collides with the month name). Add your own
+# language's hedge words here before first use.
+HEDGES = [
+    "only", "provisional", "unverified", "tentative", "estimated", "caveat",
+    "assume", "assumes", "assuming", "subject to",
+    "僅", "暫定", "假設", "可能", "未驗證", "未實測", "單一來源", "待驗證",
+]
 
 
 def _neg_regex(w: str) -> str:
@@ -91,6 +104,9 @@ def extract(text: str) -> dict:
     out["negation_counts"] = {
         w: len(re.findall(_neg_regex(w), stripped, re.I)) for w in NEGATIONS
     }
+    out["hedge_counts"] = {
+        w: len(re.findall(_neg_regex(w), stripped, re.I)) for w in HEDGES
+    }
     return out
 
 
@@ -109,6 +125,8 @@ def _whitelist_spans(text: str) -> list[tuple[int, int]]:
     for w in NEGATIONS:
         spans.extend(m.span() for m in re.finditer(_neg_regex(w), stripped, re.I))
     for w in QUANTIFIER_BOUNDS:
+        spans.extend(m.span() for m in re.finditer(_neg_regex(w), stripped, re.I))
+    for w in HEDGES:
         spans.extend(m.span() for m in re.finditer(_neg_regex(w), stripped, re.I))
     return spans
 
@@ -135,7 +153,7 @@ def coverage_pct(text: str) -> float:
 def diff(orig: dict, comp: dict) -> dict:
     missing = {}
     for key, vals in orig.items():
-        if key in ("negation_counts", "quantifier_counts"):
+        if key in ("negation_counts", "quantifier_counts", "hedge_counts"):
             drops = {
                 w: (n, comp[key].get(w, 0))
                 for w, n in vals.items()
@@ -166,6 +184,20 @@ def _est_tokens(text: str) -> int:
     cjk = sum(1 for ch in text if '\u4e00' <= ch <= '\u9fff' or '\u3040' <= ch <= '\u30ff')
     non_cjk_bytes = len(text.encode('utf-8')) - cjk * 3
     return cjk + max(0, non_cjk_bytes) // 4
+
+def _grounded_pct(orig_text: str, comp_text: str) -> float:
+    """Groundedness proxy (2026-07-17, borrowing the groundedness-drop measurement
+    idea from arXiv 2503.19114): fraction of the compressed text's word-level tokens
+    that appear in the original. Under the "deletion, not rewriting" rule a pure
+    deletion pass should score ~100; a drop means rewriting/generation crept in
+    (ungrounded-content risk). Deterministic, no LLM."""
+    tok = re.compile(r"[\w]+|[\u4e00-\u9fff]")
+    orig_set = set(tok.findall(orig_text))
+    comp_tokens = tok.findall(comp_text)
+    if not comp_tokens:
+        return 100.0
+    return round(sum(1 for t in comp_tokens if t in orig_set) / len(comp_tokens) * 100, 1)
+
 
 def main() -> int:
     p = argparse.ArgumentParser()
@@ -216,6 +248,7 @@ def main() -> int:
             "orig_bytes": ob, "comp_bytes": cb,
             "saving_pct": round((1 - cb / ob) * 100, 1) if ob else 0.0,
             "tokens_est_orig": _est_tokens(orig_text), "tokens_est_comp": _est_tokens(comp_text),
+            "grounded_pct": _grounded_pct(orig_text, comp_text),
             "pass": not missing, "missing_keys": sorted(missing.keys()),
         }
         a.log_file.parent.mkdir(parents=True, exist_ok=True)

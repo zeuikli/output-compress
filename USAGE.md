@@ -47,6 +47,21 @@ cp draft.md /tmp/orig.txt        # (agent produces comp)   python3 scripts/fidel
 
 Throwaway chat replies don't need the gate; persisted artifacts always do.
 
+Two workflow tips carried from field runs:
+
+- **Negation-first:** before deleting anything, lock every sentence containing a
+  negation or quantifier bound (whitelist item 3) whole, then compress the rest —
+  `negation_counts` was the dominant first-round gate failure before this ordering.
+- **Watch `grounded_pct` in the log:** each `--log` record includes the fraction of
+  compressed tokens that appear in the original. Deletion-only compression sits at
+  ~100; a drop means rewriting crept in, even if the gate passed.
+
+**Delegating to a cheaper model:** the deletion judgment can be handed to a cheap
+worker model for long (≥4KB) persisted text whose `--coverage` pre-check isn't `skip`
+— but the fidelity gate must always be run by the orchestrator itself, never the
+worker, and a gate failure falls back to the original text rather than re-delegating.
+See `SKILL.md` §4b for the full flow and the scaling-paradox rationale.
+
 ### Pre-check: `--coverage` (is this text even worth compressing?)
 
 Before spending effort compressing an agent-dispatch prompt or archival/log text, ask
@@ -96,7 +111,7 @@ uncompressed.
 
 ## 4. What is never compressed (whitelist)
 
-Numbers, negation words **and their whole clause** (not/never/unless/except…), file paths, URLs, code, structured tags, safety warnings, contract fields (Goal / Done-when / Return). If a paragraph is mostly whitelist material, skip compression — there is nothing safe to remove.
+Numbers, negation words **and their whole clause** (not/never/unless/except…), quantifier bounds (at most / at least / up to…), hedges/qualifiers (only / provisional / unverified / tentative…), file paths, URLs, code, structured tags, safety warnings, contract fields (Goal / Done-when / Return). If a paragraph is mostly whitelist material, skip compression — there is nothing safe to remove.
 
 ## 5. Customizing for your language / tags
 
@@ -104,6 +119,7 @@ Numbers, negation words **and their whole clause** (not/never/unless/except…),
 
 ```python
 NEGATIONS = ["not", "never", "unless", "except", ...]   # add yours: "不", "禁止", "nicht", "pas"…
+HEDGES = ["only", "provisional", "unverified", ...]      # add your language's qualifiers (prefer multi-word phrases)
 CUSTOM_TAG_PATTERNS = [r"\[TODO[^\]]*\]"]                # add your team's markers
 ```
 

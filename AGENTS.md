@@ -52,6 +52,11 @@ saved log's reader is any future session, so use `lite` for anything long-lived)
 5. Safety-critical statements (irreversible-action confirmations, incident/priority-0
    report language) — never compress at all
 6. Contract fields (Goal / Non-goals / Done-when / Return {} or equivalent)
+7. Hedges/qualifiers (only/provisional/unverified/tentative/estimated/caveat/assume/
+   subject to, and local-language equivalents) — occurrence count must not decrease;
+   stripping the caveat while keeping the evidence ("decontextualization") flips
+   meaning the same way a dropped negation does. Word list = `HEDGES` in
+   `scripts/fidelity-check.py`.
 
 ### Compression is deletion, not rewriting
 
@@ -62,6 +67,10 @@ not include X" replaces one negation word with a different one. The fidelity gat
 usually flag this as a lost element, but the real fix is not attempting the rewrite in
 the first place — a pure deletion pass never has this failure mode. If a sentence needs
 rewording (not just trimming) to get shorter, leave it uncompressed.
+
+Negation-first ordering: before deleting anything, enumerate the negation/quantifier
+clauses (whitelist item 3) and lock those sentences whole, then compress the rest —
+this eliminates the most common first-round gate failure (`negation_counts`).
 
 ### Fidelity gate — run after every compression, before persisting anything
 
@@ -77,7 +86,22 @@ to avoid asking a model to self-certify "the meaning is still the same." When ou
 about to be persisted and the gate still fails after retries, persist the original text
 — but keep the `--log` flag on so the failure is recorded; a log of which level/context
 combinations keep failing is useful signal for lowering that cap later, not just noise
-to discard. `--log` appends JSONL to `--log-file` (default `./compress-log.jsonl`).
+to discard. `--log` appends JSONL to `--log-file` (default `./compress-log.jsonl`);
+each record includes `grounded_pct` (fraction of compressed tokens present in the
+original — should sit at ~100 under deletion-only compression; a drop means rewriting
+crept in).
+
+### Delegating compression to a cheaper model (optional)
+
+Deciding *which sentences are deletable* is a judgment call and may be delegated to a
+cheap/small worker model; the fidelity gate is deterministic and **must always be run
+by the orchestrating agent itself, never by the worker** — a worker's "gate passed"
+claim is not evidence. Prefer a cheap executor and avoid frontier-model self-compression
+of long text: larger compressor models measure as *less* faithful to the source
+(arXiv 2602.09789, "scaling paradox"). Delegate only when the text will be persisted,
+the original is ≥4KB, and the `--coverage` pre-check does not say `skip`; on gate
+failure fall back to the original text instead of re-delegating. Tag delegated runs'
+`--context` as `delegated-<original context>` so they can be compared against inline runs.
 
 ### Known limits
 
@@ -86,8 +110,13 @@ to discard. `--log` appends JSONL to `--log-file` (default `./compress-log.jsonl
 - Negation fidelity is checked by "count did not decrease," which can't catch a
   negation word surviving while its clause's scope silently changed — use `lite` (or
   skip compression) wherever a negation carries real logical weight.
+- The hedge list (whitelist item 7) is deliberately conservative to keep false FAILs
+  low — extend `HEDGES` with your language's qualifier words, preferring multi-word
+  phrases.
 - Savings figures are the upstream project's self-report on one model; verify on your
-  own tasks before treating them as a guarantee.
+  own tasks before treating them as a guarantee. Your own logged numbers are also a
+  self-selected sample (only runs where compression was attempted *and* logged appear)
+  — quote them with that qualifier, never as a commitment.
 
 ### Always-on (optional)
 

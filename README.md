@@ -5,6 +5,32 @@ for the full rules (Claude Code / Agent Skills format) or `AGENTS.md` for the sa
 rules in Codex's format. `USAGE.md` covers day-to-day workflows, log analysis, and
 auto-activation wiring (§7).
 
+## What's in the box (v1.5.0)
+
+- **Three compression levels** — `lite` / `full` / `ultra` (caveman-derived syntax);
+  deletion only, never rewriting, with negation-first ordering to avoid the most
+  common gate failure (`SKILL.md` §1, §4).
+- **Model-tier compression caps** — the level is capped by who *reads* the text
+  (small models `lite`, mid-tier `full`, frontier `ultra`; uncalibrated models start
+  at `lite`) (`SKILL.md` §2).
+- **Never-compress whitelist** (7 categories) — code/paths/URLs/env vars, all numbers
+  and dates, negations + quantifier bounds with their clause, project structured tags
+  (`CUSTOM_TAG_PATTERNS`), safety-critical statements, contract fields as whole
+  blocks, and hedges/qualifiers (the "decontextualization" axis) (`SKILL.md` §3).
+- **Deterministic fidelity gate** — `scripts/fidelity-check.py` regex/set-diffs the
+  whitelist between original and compressed text; no LLM self-judgment. `--coverage`
+  pre-check tells you when compressing isn't worth it; `--log` appends JSONL records
+  with `saving_pct` and the `grounded_pct` rewriting-detector axis (`SKILL.md` §4).
+- **Delegated compression** (optional) — hand the deletion judgment to a cheap worker
+  model while the orchestrator keeps the gate (scaling-paradox grounding: bigger
+  compressor models are *less* faithful) (`SKILL.md` §4b).
+- **Pace/usage coupling** (optional) — `scripts/usage-pacer.py` emits
+  AHEAD/ON_PACE/BEHIND burn-rate verdicts plus absolute-threshold escalation (80%/95%
+  used) and handoff states (`HANDOFF_PREP`/`HANDOFF_HALT`); provider feeders
+  `claude-usage-fetch.py` / `codex-usage-fetch.py` supply real usage numbers, and
+  `codex-handoff.py` offers opt-in packet-backed handoff wiring for Codex
+  (`SKILL.md` pace sections, `USAGE.md` §7).
+
 ## Install
 
 **Fastest path:** paste `INSTALL-PROMPT.md` (below the `---`) into any AI assistant
@@ -66,8 +92,8 @@ memory or create automation. Register both `UserPromptSubmit` and
 ## Quickstart: fidelity gate demo
 
 The gate is the deterministic script in `scripts/fidelity-check.py`. It diffs
-whitelisted elements (numbers, negations, code, paths, URLs, tags) between an original
-and a compressed file. Both examples below use `--log` so you can see the JSONL trail
+whitelisted elements (numbers, negations, quantifier bounds, hedges, code, paths,
+URLs, tags) between an original and a compressed file. Both examples below use `--log` so you can see the JSONL trail
 it leaves — a failed (exit 1) attempt is logged too, not just discarded, because the
 failure pattern itself is useful signal (see `SKILL.md` §5).
 
@@ -123,7 +149,10 @@ now has 2 lines — the first `"pass": true` entry from the GOOD run above, and 
 
 If your project uses its own structured tags (ticket IDs, custom status markers,
 evidence-level flags), add regex patterns to `CUSTOM_TAG_PATTERNS` at the top of
-`scripts/fidelity-check.py` rather than editing the built-in categories.
+`scripts/fidelity-check.py` rather than editing the built-in categories. Non-English
+projects should also extend the `NEGATIONS` and `HEDGES` word lists with their
+language's negation and qualifier words before first use — the gate can only protect
+what it knows to look for.
 
 ## Attribution
 
