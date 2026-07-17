@@ -52,7 +52,7 @@ Claude Code will pick up `SKILL.md`'s frontmatter automatically on next session 
 Install the repo root as a Codex skill into `$CODEX_HOME/skills`:
 
 ```bash
-python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py \
+python3 "${CODEX_HOME:-$HOME/.codex}/skills/.system/skill-installer/scripts/install-skill-from-github.py" \
   --repo zeuikli/output-compress --path . --name output-compress
 ```
 
@@ -78,7 +78,8 @@ is optional — only needed for the pace-coupling described in `SKILL.md` / `USA
 pacer real usage numbers from the provider's usage endpoint instead of a
 bring-your-own JSON feed. Codex users who want packet-backed, memory-assisted handoff
 wiring can opt in with `OC_CODEX_HANDOFF_PACKET=1` and wire
-`scripts/codex-handoff.py --refresh` as a `UserPromptSubmit` hook. It writes an
+`python3 "${CODEX_HOME:-$HOME/.codex}/skills/output-compress/scripts/codex-handoff.py" --refresh`
+as a `UserPromptSubmit` hook. It writes an
 authoritative pending JSON packet plus a derived Markdown view when the verdict is
 fresh in a Git working tree. `--write-packet` validates nonblank checkpoint fields and a
 complete repo guard before PREP becomes ready; the host then receives `resume_at`, a stable

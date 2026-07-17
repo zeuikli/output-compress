@@ -65,14 +65,15 @@ QUANTIFIER_BOUNDS = ["at most", "at least", "up to", "no more than", "fewer than
 # compression while the caveat/qualifier needed to interpret it is stripped —
 # a named second fidelity axis. Hedge/qualifier occurrence count must not
 # decrease, same discipline as negations. The word list is deliberately
-# conservative (multi-word phrases preferred, to lower false-FAIL rate;
-# "may" is excluded because it collides with the month name). Add your own
-# language's hedge words here before first use.
+# conservative (multi-word phrases preferred, to lower false-FAIL rate). The word
+# "may" is counted case-sensitively so modal "may" is protected without treating the
+# month name "May" as a hedge. Add your own language's hedge words here before first use.
 HEDGES = [
-    "only", "provisional", "unverified", "tentative", "estimated", "caveat",
+    "only", "may", "provisional", "unverified", "tentative", "estimated", "caveat",
     "assume", "assumes", "assuming", "subject to",
     "僅", "暫定", "假設", "可能", "未驗證", "未實測", "單一來源", "待驗證",
 ]
+CASE_SENSITIVE_HEDGES = {"may"}
 
 
 def _neg_regex(w: str) -> str:
@@ -105,7 +106,8 @@ def extract(text: str) -> dict:
         w: len(re.findall(_neg_regex(w), stripped, re.I)) for w in NEGATIONS
     }
     out["hedge_counts"] = {
-        w: len(re.findall(_neg_regex(w), stripped, re.I)) for w in HEDGES
+        w: len(re.findall(_neg_regex(w), stripped, 0 if w in CASE_SENSITIVE_HEDGES else re.I))
+        for w in HEDGES
     }
     return out
 
@@ -127,7 +129,8 @@ def _whitelist_spans(text: str) -> list[tuple[int, int]]:
     for w in QUANTIFIER_BOUNDS:
         spans.extend(m.span() for m in re.finditer(_neg_regex(w), stripped, re.I))
     for w in HEDGES:
-        spans.extend(m.span() for m in re.finditer(_neg_regex(w), stripped, re.I))
+        spans.extend(m.span() for m in re.finditer(
+            _neg_regex(w), stripped, 0 if w in CASE_SENSITIVE_HEDGES else re.I))
     return spans
 
 
@@ -191,7 +194,7 @@ def _grounded_pct(orig_text: str, comp_text: str) -> float:
     that appear in the original. Under the "deletion, not rewriting" rule a pure
     deletion pass should score ~100; a drop means rewriting/generation crept in
     (ungrounded-content risk). Deterministic, no LLM."""
-    tok = re.compile(r"[\w]+|[\u4e00-\u9fff]")
+    tok = re.compile(r"[\u4e00-\u9fff]|[A-Za-z0-9_]+")
     orig_set = set(tok.findall(orig_text))
     comp_tokens = tok.findall(comp_text)
     if not comp_tokens:
@@ -251,9 +254,13 @@ def main() -> int:
             "grounded_pct": _grounded_pct(orig_text, comp_text),
             "pass": not missing, "missing_keys": sorted(missing.keys()),
         }
-        a.log_file.parent.mkdir(parents=True, exist_ok=True)
-        with a.log_file.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        try:
+            a.log_file.parent.mkdir(parents=True, exist_ok=True)
+            with a.log_file.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except OSError as e:
+            print(f"USAGE ERROR — cannot write log file: {e}", file=sys.stderr)
+            return 2
     if a.json:
         print(json.dumps({"pass": not missing, "missing": missing}, ensure_ascii=False, indent=2))
     elif missing:

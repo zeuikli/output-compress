@@ -1,6 +1,6 @@
-# dist/output-compress/scripts — 索引
+# output-compress/scripts — 索引
 
-> 可攜版 SKILL 隨附腳本（workspace 版 SSoT 在 `scripts/` 與 `.claude/skills/output-compress/scripts/`，本目錄為發佈鏡像）。
+> 可攜版 SKILL 隨附腳本；本目錄就是發布到 Claude/Codex skill install 的腳本來源。
 
 | 腳本 | 用途 |
 |---|---|

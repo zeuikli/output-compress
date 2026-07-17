@@ -73,7 +73,7 @@ from general reasoning about model capability, not from local measurement — ca
 it against your own fidelity-gate failure rate before trusting the caps as-is.
 
 **Coverage 前置判斷 (pre-check before compressing):** before compressing an agent-dispatch
-prompt or archival/log text, run `scripts/fidelity-check.py --coverage --original <file>`
+prompt or archival/log text, run `<output-compress>/scripts/fidelity-check.py --coverage --original <file>`
 and follow its recommendation (`skip` / `lite` / `tier-cap`, thresholds ≥40% / 20–40% /
 <20% whitelist-covered bytes) rather than defaulting straight to the reader-tier cap.
 These thresholds are provisional (n=2, 2026-07-12): whitelist-dense dispatch prompts
@@ -94,7 +94,7 @@ checking coverage first can save you the compress→gate→retry cycle entirely.
    clause and deleted an inline verification command embedded inside it; the gate
    caught it, but the failure mode was treating a contract field like ordinary prose
    instead of skipping the entire field untouched (2026-07-12).
-7. **Hedges/qualifiers — occurrence count must not decrease** (only / provisional /
+7. **Hedges/qualifiers — occurrence count must not decrease** (only / may / provisional /
    unverified / tentative / estimated / caveat / assume(s/ing) / subject to, and
    local-language equivalents; word-list SSoT = `HEDGES` in
    `scripts/fidelity-check.py`). "The evidence survived but the caveat needed to
@@ -106,7 +106,7 @@ checking coverage first can save you the compress→gate→retry cycle entirely.
 ## 4. Fidelity gate (mechanical, run after every compression)
 
 ```bash
-python3 scripts/fidelity-check.py \
+python3 "${CODEX_HOME:-$HOME/.codex}/skills/output-compress/scripts/fidelity-check.py" \
   --original /tmp/orig.txt --compressed /tmp/comp.txt
 # exit 0 = every whitelisted element survived
 # exit 1 = prints what was lost -> drop one compression level and retry
@@ -215,7 +215,8 @@ round-trip costs more than it saves).
   negation word surviving while its clause's scope silently changed — for anything
   where a negation carries real logical weight, use `lite` or skip compression.
 - The hedge list (whitelist item 7) is deliberately conservative to keep the
-  false-FAIL rate low — it will not catch every stripped qualifier. Extend `HEDGES`
+  false-FAIL rate low; lowercase modal `may` is protected, while month-name `May` is
+  ignored to avoid date false positives. It will not catch every stripped qualifier. Extend `HEDGES`
   with your own language's hedge words, preferring multi-word phrases.
 
 ## Auto-activation (optional)

@@ -35,7 +35,7 @@ Every time compressed text will be **persisted** (memory files, reports, handoff
 
 ```bash
 # 1. keep the original           2. compress it            3. verify
-cp draft.md /tmp/orig.txt        # (agent produces comp)   python3 scripts/fidelity-check.py \
+cp draft.md /tmp/orig.txt        # (agent produces comp)   python3 "${CODEX_HOME:-$HOME/.codex}/skills/output-compress/scripts/fidelity-check.py" \
                                                              --original /tmp/orig.txt \
                                                              --compressed /tmp/comp.txt
 ```
@@ -69,7 +69,7 @@ the script how much of the file is already whitelist material — path/code/numb
 density that can't be removed anyway:
 
 ```bash
-python3 scripts/fidelity-check.py --coverage --original /tmp/dispatch-prompt.txt
+python3 "${CODEX_HOME:-$HOME/.codex}/skills/output-compress/scripts/fidelity-check.py" --coverage --original /tmp/dispatch-prompt.txt
 ```
 
 Sample output (one-line JSON, always exit 0):
@@ -119,7 +119,7 @@ Numbers, negation words **and their whole clause** (not/never/unless/except…),
 
 ```python
 NEGATIONS = ["not", "never", "unless", "except", ...]   # add yours: "不", "禁止", "nicht", "pas"…
-HEDGES = ["only", "provisional", "unverified", ...]      # add your language's qualifiers (prefer multi-word phrases)
+HEDGES = ["only", "may", "provisional", "unverified", ...]  # add qualifiers (prefer multi-word phrases)
 CUSTOM_TAG_PATTERNS = [r"\[TODO[^\]]*\]"]                # add your team's markers
 ```
 
@@ -286,7 +286,15 @@ FETCH="$(dirname "$0")/../skills/output-compress/scripts/claude-usage-fetch.py" 
 # FETCH="$(dirname "$0")/../skills/output-compress/scripts/codex-usage-fetch.py"  # optional, Codex
 VERDICT="${OC_PACER_VERDICT:-/tmp/oc-pacer-verdict.json}"
 if [ -f "$PACER" ]; then
-  AGE=$(( $(date +%s) - $(stat -c%Y "$VERDICT" 2>/dev/null || echo 0) ))
+  MTIME=$(python3 - "$VERDICT" <<'PY'
+import pathlib, sys
+try:
+    print(int(pathlib.Path(sys.argv[1]).stat().st_mtime))
+except OSError:
+    print(0)
+PY
+)
+  AGE=$(( $(date +%s) - MTIME ))
   # Optional provider feed: refresh OC_USAGE_FILE from the provider endpoint (best-effort,
   # its own TTL cache means the real network call is at most once per OC_FETCH_TTL_S).
   [ "$AGE" -gt 600 ] && [ -f "$FETCH" ] && python3 "$FETCH" >/dev/null 2>&1
@@ -384,7 +392,7 @@ portable advisory fallback. Gate actual compression with an explicit phrase if d
 The bundled helper is opt-in and fail-open:
 
 ```bash
-python3 scripts/codex-handoff.py --refresh
+python3 "${CODEX_HOME:-$HOME/.codex}/skills/output-compress/scripts/codex-handoff.py" --refresh
 ```
 
 `--refresh` runs the optional feeder and pacer and rejects the verdict unless that run
